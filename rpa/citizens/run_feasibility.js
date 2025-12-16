@@ -1,8 +1,11 @@
 import { chromium } from 'playwright';
 import { createInterface } from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
+import fs from 'fs/promises';
+import path from 'path';
 import config from './demoConfig.js';
-import { getLatestCitizensCode } from './gmailHelper.js';
+import { getLatestCitizensCode } from './gmailHelper.js'
+// import { getLatestCitizensCodeIMAP } from './imapHelper.js'; // Ensure using the correct helper
 
 async function runDemo() {
     console.log("🚀 Starting Citizens Feasibility Demo");
@@ -29,62 +32,46 @@ async function runDemo() {
         // --- 2. LOGIN PHASE 2: POLICY CENTER SSO ---
         try {
             console.log("   - Clicking PolicyCenter...");
-            // Click the PolicyCenter link (nth(1) based on your codegen)
             await page.getByText('PolicyCenter®').nth(1).click();
             
             console.log("   - Waiting for SSO Page...");
-            // Wait for the SSO login form to appear
             await page.waitForSelector('input[name="Email Address"], [placeholder="Email Address"]', { timeout: 15000 });
             
             console.log("   - [Login 2/2] Entering SSO Credentials...");
-            // Use USERNAME2 here
             await page.getByRole('textbox', { name: 'Email Address' }).fill(config.USERNAME2);
             await page.getByRole('textbox', { name: 'Password' }).fill(config.PASSWORD);
             
-            // Click Sign In and WAIT for navigation
             await page.getByRole('button', { name: 'Sign in' }).click();
-            await page.waitForLoadState('networkidle'); // Wait for network to quiet down
-            await page.waitForTimeout(2000); // Small buffer for animations
+            await page.waitForLoadState('networkidle'); 
+            await page.waitForTimeout(2000); 
 
         } catch (e) {
             console.log("   ⚠️ Note: PolicyCenter SSO step skipped or already active.");
         }
 
-        // --- 3. MFA HANDLING (FIXED) ---
+        // --- 3. MFA HANDLING ---
         try {
             console.log("   - Checking for MFA Challenge...");
 
-            // Define selectors
             const sendBtnSelector = 'button:has-text("Send verification code")';
             const inputSelector = 'input[name="Verification code"], [placeholder="Verification code"]';
 
-            // Wait for EITHER the button OR the input to appear
             try {
-                await page.waitForSelector(`${sendBtnSelector}, ${inputSelector}`, { timeout: 10000 });
-            } catch (e) {
-                console.log("   - Neither 'Send' button nor 'Input' found immediately. Checking frames...");
-            }
+                await page.waitForSelector(`${sendBtnSelector}, ${inputSelector}`, { timeout: 2000 });
+            } catch (e) {}
 
-            // Scenario A: "Send verification code" button is visible
             if (await page.isVisible(sendBtnSelector)) {
-                console.log("   - Found 'Send verification code' button. Clicking...");
+                console.log("   - Clicking 'Send verification code'...");
                 await page.click(sendBtnSelector);
-                // After clicking, wait for the input to appear
                 await page.waitForSelector(inputSelector, { timeout: 10000 });
             } 
-            // Scenario B: Input is already visible (Auto-sent)
-            else if (await page.isVisible(inputSelector)) {
-                console.log("   - Verification input already visible.");
-            }
 
-            // Now perform the Code Entry
             if (await page.isVisible(inputSelector)) {
                 console.log("\n⚠️  MFA REQUIRED");
                 
-                // Try Gmail API First
+                // Try IMAP Helper First
                 let code = await getLatestCitizensCode();
                 
-                // Fallback to Manual
                 if (!code) {
                     code = await rl.question('👉 Enter code from email: ');
                 } else {
@@ -95,15 +82,15 @@ async function runDemo() {
                 console.log("   - Verifying Code...");
                 await page.click('button:has-text("Verify code")'); 
                 
-                // Explicitly wait for and click Continue
                 console.log("   - Waiting for Continue button...");
-                await page.waitForSelector('button:has-text("Continue")', { timeout: 15000 });
-                await page.click('button:has-text("Continue")');
+                try {
+                    await page.waitForSelector('button:has-text("Continue")', { timeout: 10000 });
+                    await page.click('button:has-text("Continue")');
+                } catch (e) {
+                    console.log("   - 'Continue' button not found, checking dashboard...");
+                }
                 
-                console.log("   - Waiting for Dashboard...");
                 await page.waitForLoadState('networkidle');
-                
-                // ADDED DELAY HERE to prevent skipping the first policy
                 console.log("   - Pausing 5s for Dashboard Hydration...");
                 await page.waitForTimeout(5000); 
                 
@@ -113,10 +100,10 @@ async function runDemo() {
             }
 
         } catch (e) {
-            console.log("   - Error in MFA flow (or login proceeded automatically): " + e.message);
+            console.log("   - Error in MFA flow: " + e.message);
         }
 
-        // --- 4. PROCESS POLICIES (The Loop) ---
+        // --- 4. PROCESS POLICIES ---
         const report = [];
         
         for (const policyNum of config.TEST_POLICIES) {
@@ -124,26 +111,26 @@ async function runDemo() {
             const result = { policy: policyNum, status: 'Unknown', integrity: 'N/A', balance: 'N/A' };
 
             try {
-                // Expand Search Tab
-                const searchTab = page.locator('#TabBar-PolicyTab > .gw-action--expand-button');
-                // Use safe click if visible
-                if (await searchTab.count() > 0 && await searchTab.isVisible()) {
-                    await searchTab.click();
+                // Ensure the Policy Tab Search Input is visible
+                const searchInput = page.locator('input[name*="PolicyRetrievalItem"]');
+                const expandButton = page.locator('#TabBar-PolicyTab > .gw-action--expand-button');
+
+                if (!(await searchInput.isVisible())) {
+                    console.log("   - Expanding Search Tab...");
+                    await expandButton.click();
+                    // Wait for the animation to finish and input to become visible
+                    await searchInput.waitFor({ state: 'visible', timeout: 5000 });
                 }
 
-                // Search Policy
                 console.log("   - Searching...");
-                // Use a more generic selector that matches your codegen input name
-                const searchInput = page.locator('input[name*="PolicyRetrievalItem"]');
-                await searchInput.waitFor({ state: 'visible', timeout: 5000 });
+                
                 await searchInput.fill(policyNum);
                 await page.keyboard.press('Enter');
                 
                 await page.waitForLoadState('networkidle');
-                await page.waitForTimeout(3000); // Wait for search results
+                await page.waitForTimeout(3000);
 
                 // --- 4A. INTEGRITY CHECKS ---
-                // Check 1: Carrier Changed/Gone
                 const noSelection = await page.getByRole('cell').filter({ hasText: 'No selection has yet been' }).isVisible();
                 if (noSelection) {
                     result.status = 'CARRIER_LEFT';
@@ -153,60 +140,59 @@ async function runDemo() {
                     continue; 
                 }
 
-                // Check 2: Depopulation Warning
                 const depopWarning = await page.getByRole('cell').filter({ hasText: 'Policyholder Choice details' }).isVisible();
-                if (depopWarning) {
-                    result.integrity = '⚠️ DEPOPULATION RISK';
-                    console.log("   -> Alert: Depopulation status found.");
-                } else {
-                    result.integrity = '✅ SECURE';
-                }
-
+                result.integrity = depopWarning ? '⚠️ ASSUMED/ DEPOPULATED' : '✅ SECURE';
                 result.status = 'Active (Found)';
 
                 // --- 4B. BILLING CHECKS ---
-                console.log("   - Checking Billing...");
-                await page.getByRole('menuitem', { name: 'Billing' }).click();
-                await page.waitForLoadState('domcontentloaded');
-                await page.waitForTimeout(2000);
+                if (result.integrity.includes('SECURE')) {
+                    console.log("   - Checking Billing...");
+                    await page.getByRole('menuitem', { name: 'Billing' }).click();
+                    await page.waitForLoadState('domcontentloaded');
+                    await page.waitForTimeout(2000);
 
-                // --- DYNAMIC POLICY PERIOD SELECTION ---
-                console.log("   - Checking Policy Periods...");
-                const periodDropdown = page.getByLabel('Policy Period');
-                
-                if (await periodDropdown.isVisible()) {
-                    // 1. Get all options from the dropdown
-                    const optionValues = await periodDropdown.locator('option').evaluateAll(opts => opts.map(o => o.value));
-                    
-                    if (optionValues.length > 0) {
-                        // 2. Select the LAST item in the list (Assuming it's the latest term)
-                        const latestValue = optionValues[optionValues.length - 1]; 
-                        console.log(`     -> Selecting latest period: ${latestValue}`);
-                        
-                        await periodDropdown.selectOption(latestValue);
-                        
-                        // 3. Wait for the page to refresh after selection
-                        await page.waitForLoadState('networkidle');
-                        await page.waitForTimeout(2000); 
+                    // Dynamic Policy Period Selection
+                    const periodDropdown = page.getByLabel('Policy Period');
+                    if (await periodDropdown.isVisible()) {
+                        const optionValues = await periodDropdown.locator('option').evaluateAll(opts => opts.map(o => o.value));
+                        if (optionValues.length > 0) {
+                            const latestValue = optionValues[optionValues.length - 1]; 
+                            await periodDropdown.selectOption(latestValue);
+                            await page.waitForTimeout(2000); 
+                        }
                     }
-                } else {
-                    console.log("     -> 'Policy Period' dropdown not found (Single term only?)");
-                }
 
-                // We use a Regex to match "Total Charges" followed by any amount
-                // This handles "Total Charges2,492.00" or "Total Charges: $2,492.00"
-                const totalChargesEl = page.locator('body').getByText(/Total Charges/i).first();
-                
-                if (await totalChargesEl.isVisible()) {
-                    const fullText = await totalChargesEl.innerText();
-                    // Clean and extract the number (remove "Total Charges", $, commas)
-                    const amount = parseFloat(fullText.replace(/[^0-9.]/g, '')) || 0;
+                    // --- SCRAPE TOTAL CHARGES (TARGETED) ---
+                    console.log("   - Looking for 'Total Charges' phrase...");
                     
-                    result.balance = `$${amount.toFixed(2)}`;
-                    console.log(`   -> Total Charges Found: ${result.balance}`);
-                } else {
-                    result.balance = 'Not Found';
-                    console.log("   -> Total Charges element not found.");
+                    // Regex logic:
+                    // /Total Charges   -> Matches the literal text
+                    // \s* -> Matches 0 or more spaces (Handles "Total Charges2,492.00")
+                    // [\d,]+\.\d{2}    -> Matches number format like 2,492.00
+                    const totalChargesLocator = page.getByText(/Total Charges\s*[\d,]+\.\d{2}/i).first();
+                    
+                    try {
+                        await totalChargesLocator.waitFor({ state: 'visible', timeout: 5000 });
+                        const fullText = await totalChargesLocator.innerText();
+                        
+                        // Clean the text to get just the number
+                        // Example: "Total Charges2,492.00" -> 2492.00
+                        const amount = parseFloat(fullText.replace(/Total Charges/i, '').replace(/[^0-9.]/g, '')) || 0;
+                        
+                        result.balance = `$${amount.toFixed(2)}`;
+                        console.log(`   -> Total Charges Found: ${result.balance}`);
+                        
+                    } catch (e) {
+                        console.log("   -> 'Total Charges' phrase not found.");
+                        
+                        // Fallback: Scrape ONLY Past Due as requested
+                        console.log("   -> Fallback: Checking Past Due Only...");
+                        const pastDue = await page.locator('#PolicyFile_Billing-Policy_BillingScreen-BilledOutstandingInputGroup-PastDue .gw-value-readonly-wrapper').innerText().catch(() => '0');
+                        const pastDueVal = parseFloat(pastDue.replace(/[^0-9.]/g, '')) || 0;
+                        
+                        result.balance = `$${pastDueVal.toFixed(2)}`;
+                        console.log(`   -> Past Due Balance: ${result.balance}`);
+                    }
                 }
 
             } catch (err) {
@@ -216,6 +202,23 @@ async function runDemo() {
             report.push(result);
         }
 
+        // --- STEP 5: SAVE REPORT TO JSON FILE ---
+        console.log("\n📝 Generating Report...");
+        
+        const reportDir = path.join(process.cwd(), 'reports');
+        try {
+            await fs.mkdir(reportDir, { recursive: true });
+        } catch (e) { /* ignore */ }
+
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const filename = `citizens_feasibility_${timestamp}.json`;
+        const filepath = path.join(reportDir, filename);
+
+        await fs.writeFile(filepath, JSON.stringify(report, null, 4));
+
+        console.log(`✅ Report saved to: ${filepath}`);
+        
+        // Still print to console for your debugging, but user can open the file
         console.table(report);
 
     } catch (err) {
