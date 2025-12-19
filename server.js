@@ -8,8 +8,7 @@ import morgan from "morgan";
 
 /** constants */
 import {
-    ENV, PORT, ENABLE_CRONS, LOCAL,
-    SQS_PRODUCER, SQS_CONSUMER, SERVER_ENV
+
 } from "./Constants.js";
 
 /** routes */
@@ -28,6 +27,7 @@ app.use(bodyParser.urlencoded({ extended: true }));
 app.use(cors());
 app.use("/epic/api", router);
 app.use(morgan("tiny"));
+app.use("/epic/api", router);
 
 /** database */
 // import "./database/database.config.js";

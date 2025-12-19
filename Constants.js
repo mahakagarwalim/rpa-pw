@@ -32,8 +32,8 @@ export const SQS_PRODUCER = process.env.SQS_PRODUCER && process.env.SQS_PRODUCER
 export const SQS_CONSUMER = process.env.SQS_CONSUMER && process.env.SQS_CONSUMER === "TRUE" && true || false;
 
 /** DB URI */
-export const PRIMARY_DB_URI = SERVER_ENV === "PROD" && PROD_PRIMARY_DB_URI || TEST_PRIMARY_DB_URI;
-export const SECONDARY_DB_URI = SERVER_ENV === "PROD" && PROD_SECONDARY_DB_URI || TEST_SECONDARY_DB_URI;;
+export const PRIMARY_DB_URI = PROD_PRIMARY_DB_URI;
+export const SECONDARY_DB_URI = PROD_SECONDARY_DB_URI;
 
 
 /** AWS CONFIG */

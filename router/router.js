@@ -1,5 +1,6 @@
 /** modules */
 import express from "express";
+import { auditPolicies } from "../controllers/rpaController.js"; 
 
 
 /** initialization */
@@ -11,3 +12,5 @@ export const router = express.Router();
 // /** epic <> im */
 // router.use('/epic_im', epic_im_router);
 
+// RPA Routes
+router.post('/rpa/audit', auditPolicies);
