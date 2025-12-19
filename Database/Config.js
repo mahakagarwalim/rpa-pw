@@ -12,8 +12,6 @@ export let SecondaryConnection = Mongoose.createConnection(SECONDARY_DB_URL);
 /** DB Connection Status Logs */
 PrimaryConnection.on("connected", async function () {
     console.info(`\nPrimaryDB is Connected!`);
-    scheduleMongooseDebugToggle();
-
 });
 SecondaryConnection.on("connected", function () {
     console.info(`\nSecondaryDB is Connected!`);

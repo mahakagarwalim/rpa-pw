@@ -11,25 +11,34 @@ export const auditPolicies = async (req, res) => {
     }
 
     // IF policies are missing, fetch them from the DB using the new aggregation logic
+    let fetchedPolicyObjects = null;
     if (!policies || policies.length === 0) {
         try {
             console.log(`[API] Fetching policies for DealCard: ${dealcard_id}`);
-            const policyObjects = await getPoliciesForRenewalAutomation(dealcard_id);
+            fetchedPolicyObjects = await getPoliciesForRenewalAutomation(dealcard_id);
 
-            if (!policyObjects || policyObjects.length === 0) {
+            if (!fetchedPolicyObjects || fetchedPolicyObjects.length === 0) {
                 return res.status(404).json({
                     success: false,
                     message: "No relevant Citizens policies found in this DealCard."
                 });
             }
 
+            // Log the fetched policies in test.js format
+            console.log(`[API] Found ${fetchedPolicyObjects.length} policies to audit:`);
+            console.log(JSON.stringify(fetchedPolicyObjects, null, 2));
+
             // Extract just the numbers for the bot
-            policies = policyObjects.map(p => p.policy_number);
-            console.log(`[API] Found ${policies.length} policies to audit:`, policies);
+            policies = fetchedPolicyObjects.map(p => p.policy_number);
+            console.log(`[API] Policy numbers extracted:`, policies);
 
         } catch (dbErr) {
             console.error("[API] Database error:", dbErr);
-            return res.status(500).json({ success: false, message: "Database error fetching policies." });
+            return res.status(500).json({ 
+                success: false, 
+                message: "Database error fetching policies.",
+                error: dbErr.message 
+            });
         }
     }
 
@@ -58,6 +67,10 @@ export const auditPolicies = async (req, res) => {
             success: isSuccess,
             message: "Audit process completed.",
             log_id: logEntry._id,
+            dealcard_id: dealcard_id,
+            policies_fetched: fetchedPolicyObjects || null,
+            policies_audited: policies.length,
+            execution_time_ms: executionTime,
             results: auditResults
         });
 

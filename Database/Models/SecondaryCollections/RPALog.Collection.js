@@ -1,11 +1,11 @@
 import mongoose from 'mongoose';
-import { SecondaryConnection } from "../Config.js"; // Using your existing Config
+import { SecondaryConnection } from "../../Config.js"; // Using your existing Config
 
 const Schema = mongoose.Schema;
 
 const rpaLogSchema = new Schema({
     dealcard_id: {
-        type: ObjectID,
+        type: String,
         required: true
     },
     carrier: {
