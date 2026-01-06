@@ -31,9 +31,9 @@ app.use(express.json());
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(cors());
-app.use("/epic/api", router);
+app.use("/api", router);
 app.use(morgan("tiny"));
-app.use("/epic/api", router);
+
 
 /** database */
 import "./Database/Config.js";
