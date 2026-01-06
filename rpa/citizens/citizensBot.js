@@ -342,7 +342,14 @@ export async function runCitizensAudit(policiesToAudit) {
         // --- 4. PROCESS POLICIES ---
         for (const policyNum of policiesToAudit) {
             console.log(`\n🔎 Checking Policy: ${policyNum}...`);
-            const result = { policy_number: policyNum, status: 'Unknown', integrity: 'N/A', balance: 'N/A' };
+            const result = { 
+                policy_number: policyNum, 
+                status: 'Unknown', 
+                integrity: 'N/A', 
+                balance: 'N/A',
+                isPaid: false,    // Default false
+                isAssumed: false  // Default false
+            };
 
             try {
                 // Ensure the Policy Tab Search Input is visible
@@ -368,28 +375,28 @@ export async function runCitizensAudit(policiesToAudit) {
                 const noSelection = await page.getByRole('cell').filter({ hasText: 'No selection has yet been' }).isVisible();
                 if (noSelection) {
                     result.status = 'CARRIER_LEFT';
-                    result.integrity = '⚠️ MOVED/GONE';
-                    console.log("   -> Alert: Policy carrier changed.");
+                    result.integrity = 'CARRIER CHANGED';
+                    result.isAssumed = true; // Mark as assumed/moved
                     report.push(result);
-                    continue;
+                    continue; 
                 }
 
                 // Check 2: Depopulation / Assumed Logic
                 const choiceDetailsVisible = await page.getByRole('cell').filter({ hasText: 'Policyholder Choice details' }).isVisible();
                 const bodyText = await page.innerText('body');
 
-                // Specific phrase check provided by you
+                // Specific phrase check
                 const isAssumedPhrase = bodyText.includes('This policy was assumed on');
                 const isAssumedKeyword = bodyText.toUpperCase().includes('ASSUMED') || bodyText.toUpperCase().includes('TAKEOUT');
 
                 if (choiceDetailsVisible || isAssumedPhrase || isAssumedKeyword) {
                     result.integrity = '⚠️ ASSUMED/ DEPOPULATED';
                     console.log("   -> Alert: Depopulation/Assumption detected.");
+                    result.isAssumed = true; // Mark as assumed
                 } else {
                     result.integrity = '✅ SECURE';
+                    result.status = 'ACTIVE';
                 }
-
-                result.status = 'Active (Found)';
 
                 // --- 4B. BILLING CHECKS ---
                 if (result.integrity.includes('SECURE')) {
@@ -403,8 +410,7 @@ export async function runCitizensAudit(policiesToAudit) {
                     if (await periodDropdown.isVisible()) {
                         const optionValues = await periodDropdown.locator('option').evaluateAll(opts => opts.map(o => o.value));
                         if (optionValues.length > 0) {
-                            const latestValue = optionValues[optionValues.length - 1];
-                            await periodDropdown.selectOption(latestValue);
+                            await periodDropdown.selectOption(optionValues[optionValues.length - 1]);
                             await page.waitForTimeout(2000);
                         }
                     }
@@ -414,23 +420,27 @@ export async function runCitizensAudit(policiesToAudit) {
                     try {
                         // Selector from your previous codegen/logs
                         const pastDueLocator = page.locator('#PolicyFile_Billing-Policy_BillingScreen-BilledOutstandingInputGroup-PastDue .gw-value-readonly-wrapper');
-
                         await pastDueLocator.waitFor({ state: 'visible', timeout: 5000 });
                         const pastDueText = await pastDueLocator.innerText();
-
                         const pastDueVal = parseFloat(pastDueText.replace(/[^0-9.]/g, '')) || 0;
+
                         result.balance = `$${pastDueVal.toFixed(2)}`;
                         console.log(`   -> Past Due Found: ${result.balance}`);
+                        if (pastDueVal === 0) {
+                            result.isPaid = true;
+                        }
 
                     } catch (e) {
                         console.log("   -> Past Due element not found (likely $0.00 or hidden).");
                         result.balance = "$0.00";
+                        result.isPaid = true;
                     }
                 }
 
             } catch (err) {
                 console.log(`   ❌ Error: ${err.message}`);
                 result.status = 'Error/Not Found';
+                result.notes = err.message;
             }
             report.push(result);
         }
@@ -441,7 +451,7 @@ export async function runCitizensAudit(policiesToAudit) {
         const reportDir = path.join(process.cwd(), 'reports');
         try {
             await fs.mkdir(reportDir, { recursive: true });
-        } catch (e) { /* ignore */ }
+        } catch (e) {}
 
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
         const filename = `citizens_audit_${timestamp}.json`;

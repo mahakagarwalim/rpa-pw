@@ -17,6 +17,14 @@ const rpaLogSchema = new Schema({
         enum: ["SUCCESS", "PARTIAL_SUCCESS", "FAILED"],
         default: "SUCCESS"
     },
+    dealcard_is_paid: {
+        type: Boolean,
+        default: false
+    },
+    dealcard_is_assumed: {
+        type: Boolean,
+        default: false
+    },
     executed_by: {
         type: String,
         default: "SYSTEM_API"
@@ -29,7 +37,9 @@ const rpaLogSchema = new Schema({
         status: String,
         integrity: String,
         balance: String,
-        notes: String
+        notes: String,
+        isPaid: { type: Boolean },
+        isAssumed: { type: Boolean }
     }],
     raw_data: {
         type: Schema.Types.Mixed
