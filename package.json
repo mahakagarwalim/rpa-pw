@@ -23,6 +23,7 @@
     "googleapis": "^168.0.0",
     "mongoose": "^9.0.1",
     "morgan": "^1.10.1",
+    "nodemailer": "^7.0.12",
     "playwright": "^1.57.0"
   }
 }

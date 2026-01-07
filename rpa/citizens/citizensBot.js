@@ -200,7 +200,7 @@ import config from './demoConfig.js';
 import { getLatestCitizensCode } from './gmailHelper.js';
 import fs from 'fs/promises';
 import path from 'path';
-
+import { sendEmailReport } from './emailHelper.js';
 /**
  * Main Entry Point for API Trigger
  * @param {Array<string>} policiesToAudit - List of policy numbers from the request
@@ -461,8 +461,24 @@ export async function runCitizensAudit(policiesToAudit) {
 
         console.log(`✅ Report saved to: ${filepath}`);
 
+        // --- STEP 6: SEND EMAIL (New Logic) ---
+        console.log("📧 Sending Report via Email...");
+        
+        const mailBody = {
+            "to": ["satyam@insuredmine.com"],
+            "subject": `RPA Audit Report - Citizens - ${new Date().toLocaleDateString()}`,
+            "mailData": JSON.stringify(report, null, 4) // Sending the payload as JSON string
+        };
+
+        await sendEmailReport(mailBody);
+
     } catch (err) {
         console.error("[Bot] Runtime Error:", err);
+        await sendEmailReport({
+            "to": ["satyam@insuredmine.com"],
+            "subject": `RPA Audit FAILED - Citizens`,
+            "mailData": `Bot encountered a critical error: ${err.message}`
+        });
         return { error: err.message, report };
     } finally {
         console.log("\n✅ Audit Complete. Closing Browser...");
@@ -471,3 +487,4 @@ export async function runCitizensAudit(policiesToAudit) {
 
     return report;
 }
+
