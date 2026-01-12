@@ -49,9 +49,14 @@ export const auditPolicies = async (req, res) => {
         // 2. Trigger Bot
         const auditResults = await runCitizensAudit(policies);
         const executionTime = Date.now() - startTime;
+        
+        // Handle error case: bot returns { error: string, report: array }
+        // Handle success case: bot returns array directly
         const isSuccess = !auditResults.error;
-        const isAnyAssumed = auditResults.some(r => r.isAssumed === true);
-        const areAllPaid = !isAnyAssumed && auditResults.every(r => r.isPaid === true);
+        const resultsArray = Array.isArray(auditResults) ? auditResults : (auditResults.report || []);
+        
+        const isAnyAssumed = resultsArray.some(r => r.isAssumed === true);
+        const areAllPaid = !isAnyAssumed && resultsArray.every(r => r.isPaid === true);
 
         // 3. Save to Secondary DB
         const logEntry = await CreateRPALog({
@@ -61,14 +66,14 @@ export const auditPolicies = async (req, res) => {
             dealcard_is_paid: areAllPaid,
             dealcard_is_assumed: isAnyAssumed,
             execution_time_ms: executionTime,
-            policies_audited: auditResults,
+            policies_audited: resultsArray,
             raw_data: auditResults
         });
 
         // 4. Send Response
         return res.status(200).json({
             success: isSuccess,
-            message: "Audit process completed.",
+            message: isSuccess ? "Audit process completed." : (auditResults.error || "Audit process failed."),
             log_id: logEntry._id,
             dealcard_status: {
                 isPaid: areAllPaid,
@@ -78,7 +83,8 @@ export const auditPolicies = async (req, res) => {
             policies_fetched: fetchedPolicyObjects || null,
             policies_audited: policies.length,
             execution_time_ms: executionTime,
-            results: auditResults
+            results: resultsArray,
+            error: auditResults.error || null
         });
 
     } catch (error) {
