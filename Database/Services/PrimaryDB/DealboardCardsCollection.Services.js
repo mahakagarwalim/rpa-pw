@@ -16,7 +16,8 @@ export const getPoliciesForRenewalAutomation = async (dealcardId) => {
         const pipeline = [
             {
                 $match: {
-                    _id: new ObjectId(dealcardId),
+                    // _id: new ObjectId(dealcardId),
+                    agency_id: new ObjectId(),
                     archived: false,
                     createdFor: "renewal_automation"
                 }

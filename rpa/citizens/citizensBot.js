@@ -201,6 +201,7 @@ import { getLatestCitizensCode } from './gmailHelper.js';
 import fs from 'fs/promises';
 import path from 'path';
 import { sendEmailReport } from './emailHelper.js';
+import { generateEmailHTML, generateErrorHTML } from './emailTemplate.js';
 /**
  * Main Entry Point for API Trigger
  * @param {Array<string>} policiesToAudit - List of policy numbers from the request
@@ -208,6 +209,7 @@ import { sendEmailReport } from './emailHelper.js';
  */
 export async function runCitizensAudit(policiesToAudit) {
     console.log(`[Bot] Starting Audit for ${policiesToAudit.length} policies...`);
+    const startTime = Date.now();
 
     // 1. LAUNCH BROWSER (Same config as your script)
     const browser = await chromium.launch({
@@ -390,11 +392,11 @@ export async function runCitizensAudit(policiesToAudit) {
                 const isAssumedKeyword = bodyText.toUpperCase().includes('ASSUMED') || bodyText.toUpperCase().includes('TAKEOUT');
 
                 if (choiceDetailsVisible || isAssumedPhrase || isAssumedKeyword) {
-                    result.integrity = '⚠️ ASSUMED/ DEPOPULATED';
+                    result.integrity = 'ASSUMED ';
                     console.log("   -> Alert: Depopulation/Assumption detected.");
                     result.isAssumed = true; // Mark as assumed
                 } else {
-                    result.integrity = '✅ SECURE';
+                    result.integrity = 'ENFORCED';
                     result.status = 'ACTIVE';
                 }
 
@@ -464,20 +466,24 @@ export async function runCitizensAudit(policiesToAudit) {
         // --- STEP 6: SEND EMAIL (New Logic) ---
         console.log("📧 Sending Report via Email...");
         
+        const executionTime = Date.now() - startTime;
+        const emailHTML = generateEmailHTML(report, executionTime);
+        
         const mailBody = {
             "to": ["satyam@insuredmine.com"],
             "subject": `RPA Audit Report - Citizens - ${new Date().toLocaleDateString()}`,
-            "mailData": JSON.stringify(report, null, 4) // Sending the payload as JSON string
+            "mailData": emailHTML // Sending HTML formatted email
         };
 
         await sendEmailReport(mailBody);
 
     } catch (err) {
         console.error("[Bot] Runtime Error:", err);
+        const errorHTML = generateErrorHTML(`Bot encountered a critical error: ${err.message}`);
         await sendEmailReport({
             "to": ["satyam@insuredmine.com"],
             "subject": `RPA Audit FAILED - Citizens`,
-            "mailData": `Bot encountered a critical error: ${err.message}`
+            "mailData": errorHTML
         });
         return { error: err.message, report };
     } finally {
