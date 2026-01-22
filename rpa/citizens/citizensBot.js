@@ -376,7 +376,18 @@ export async function runCitizensAudit(policiesToAudit) {
                 // --- 4A. INTEGRITY CHECKS ---
                 const bodyText = await page.innerText('body');
                 
-                // Check 1: Non-Renewal (Requirement B) - Check FIRST before other checks
+                // Check 1: Assumed Policy - FIRST CHECK (if assumed, no further checks needed)
+                const isAssumedPhrase = bodyText.includes('This policy was assumed on');
+                if (isAssumedPhrase) {
+                    result.status = 'IN FORCE';
+                    result.integrity = 'ASSUMED';
+                    result.isAssumed = true;
+                    console.log("   -> Alert: Policy assumed detected. Skipping all further checks.");
+                    report.push(result);
+                    continue; 
+                }
+
+                // Check 2: Non-Renewal (Requirement B)
                 const isNonRenewal = bodyText.includes('scheduled for Non renew') || 
                                      bodyText.toLowerCase().includes('scheduled for non-renewal')|| bodyText.toLowerCase().includes('scheduled for Nonrenewal- Underwriting');
                 if (isNonRenewal) {
@@ -387,36 +398,21 @@ export async function runCitizensAudit(policiesToAudit) {
                     continue; // Skip billing check for lost policies
                 }
 
-                // Check 2: Carrier Left (Requirement A) - Flag but continue to billing
+                // Check 3: "No selection has yet been" - Check billing and set status accordingly
                 const noSelection = await page.getByRole('cell').filter({ hasText: 'No selection has yet been' }).isVisible();
-                let isPotentialCarrierLeft = false;
+                let isNoSelectionCase = false;
                 if (noSelection) {
-                    isPotentialCarrierLeft = true;
-                    result.status = 'CARRIER_LEFT'; // Default, may be updated after billing check
-                    result.integrity = 'CARRIER CHANGED';
-                    result.isAssumed = true; // Mark as assumed/moved
-                    console.log("   -> Alert: Potential Carrier Left detected. Checking billing on renewal term...");
-                    // Continue to billing check instead of skipping
-                }
-
-                // Check 3: Depopulation / Assumed Logic
-                const choiceDetailsVisible = await page.getByRole('cell').filter({ hasText: 'Policyholder Choice details' }).isVisible();
-                
-                // Specific phrase check
-                const isAssumedPhrase = bodyText.includes('This policy was assumed on');
-                const isAssumedKeyword = bodyText.toUpperCase().includes('ASSUMED') || bodyText.toUpperCase().includes('TAKEOUT');
-
-                if (choiceDetailsVisible || isAssumedPhrase || isAssumedKeyword) {
-                    result.integrity = 'ASSUMED ';
-                    console.log("   -> Alert: Depopulation/Assumption detected.");
-                    result.isAssumed = true; // Mark as assumed
-                } else if (!isPotentialCarrierLeft) {
+                    isNoSelectionCase = true;
+                    console.log("   -> Alert: 'No selection has yet been' detected. Checking billing...");
+                    // Will check billing below and set status based on balance
+                } else {
+                    // If not "No selection", mark as IN FORCE/ACTIVE (will check billing below)
                     result.integrity = 'IN FORCE';
                     result.status = 'ACTIVE';
                 }
 
                 // --- 4B. BILLING CHECKS ---
-                // Always check billing (even for potential Carrier Left cases)
+                // Check billing for policies that are not assumed (assumed policies already skipped above)
                 console.log("   - Checking Billing...");
                 await page.getByRole('menuitem', { name: 'Billing' }).click();
                 await page.waitForLoadState('domcontentloaded');
@@ -447,27 +443,49 @@ export async function runCitizensAudit(policiesToAudit) {
                     result.balance = `$${pastDueVal.toFixed(2)}`;
                     console.log(`   -> Past Due Found: ${result.balance}`);
                     
-                    // Requirement A: If potential Carrier Left but balance is $0.00 (Paid) on renewal term, update to ACTIVE (renewed)
-                    if (isPotentialCarrierLeft && pastDueVal === 0) {
-                        result.status = 'ACTIVE';
-                        result.integrity = 'IN FORCE(Renewed)';
-                        result.isAssumed = false; // Reset assumed flag since it's renewed
-                        console.log("   -> Policy renewed: Balance is $0.00 on renewal term. Status updated to ACTIVE.");
-                    } else if (pastDueVal === 0) {
-                        result.isPaid = true;
+                    // Handle "No selection has yet been" case
+                    if (isNoSelectionCase) {
+                        if (pastDueVal === 0) {
+                            // No dues - mark as IN FORCE
+                            result.status = 'IN FORCE';
+                            result.integrity = 'IN FORCE';
+                            result.isPaid = true;
+                            console.log("   -> No dues found. Status set to IN FORCE.");
+                        } else {
+                            // Has dues - mark as "Payment pending carrier selection pending"
+                            result.status = 'Payment pending carrier selection pending';
+                            result.integrity = 'Payment pending carrier selection pending';
+                            result.isPaid = false;
+                            console.log("   -> Dues found. Status set to 'Payment pending carrier selection pending'.");
+                        }
+                    } else {
+                        // Normal case - check if paid or not
+                        if (pastDueVal === 0) {
+                            result.status = 'IN FORCE';
+                            result.isPaid = true;
+                            console.log("   -> Policy is paid. Status: IN FORCE, isPaid: true");
+                        } else {
+                            result.status = 'IN FORCE';
+                            result.isPaid = false;
+                            console.log("   -> Policy has dues. Status: IN FORCE, isPaid: false");
+                        }
                     }
 
                 } catch (e) {
                     console.log("   -> Past Due element not found (likely $0.00 or hidden).");
                     result.balance = "$0.00";
-                    result.isPaid = true;
                     
-                    // Requirement A: If potential Carrier Left but balance check failed (assume $0.00), update to ACTIVE
-                    if (isPotentialCarrierLeft) {
-                        result.status = 'ACTIVE';
-                        result.integrity = 'IN FORCE(Renewed)';
-                        result.isAssumed = false;
-                        console.log("   -> Policy renewed: Balance check indicates $0.00. Status updated to ACTIVE.");
+                    // Handle "No selection has yet been" case - assume no dues
+                    if (isNoSelectionCase) {
+                        result.status = 'IN FORCE (RECHECK)';
+                        result.integrity = 'IN FORCE';
+                        result.isPaid = true;
+                        console.log("   -> Balance check failed, assuming no dues. Status set to IN FORCE.");
+                    } else {
+                        // Normal case - assume paid
+                        result.status = 'IN FORCE (RECHECK)';
+                        result.isPaid = true;
+                        console.log("   -> Balance check failed, assuming paid. Status: IN FORCE, isPaid: true");
                     }
                 }
 

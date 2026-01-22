@@ -15,17 +15,31 @@ export const generateEmailHTML = (report, executionTime = null) => {
 
     // Calculate summary statistics
     const totalPolicies = report.length;
-    const completed = report.filter(r => r.status === 'ACTIVE' || r.status === 'Active (Found)').length;
+    const inForce = report.filter(r => r.status === 'IN FORCE').length;
+    const inForceRecheck = report.filter(r => r.status === 'IN FORCE (RECHECK)').length;
+    const completed = inForce + inForceRecheck; // Total completed policies
     const errored = report.filter(r => r.status === 'ERROR' || r.status === 'Error/Not Found').length;
-    const excluded = report.filter(r => r.status === 'CARRIER_LEFT').length;
-    const secure = report.filter(r => r.integrity && r.integrity.includes('SECURE')).length;
-    const assumed = report.filter(r => r.isAssumed === true).length;
+    const lost = report.filter(r => r.status === 'LOST').length;
+    const assumed = report.filter(r => r.status === 'IN FORCE' && r.integrity === 'ASSUMED').length;
+    const paymentPending = report.filter(r => r.status === 'Payment pending carrier selection pending').length;
     const paid = report.filter(r => r.isPaid === true).length;
+    const unpaid = report.filter(r => r.isPaid === false && r.status === 'IN FORCE').length;
 
     // Generate table rows
     const tableRows = report.map((item, index) => {
-        const statusClass = (item.status === 'ERROR' || item.status === 'Error/Not Found' || item.status === 'CARRIER_LEFT') ? 'error-cell' : '';
-        const integrityClass = (item.integrity && (item.integrity.includes('ASSUMED') || item.integrity.includes('DEPOPULATED'))) ? 'error-cell' : '';
+        // Status highlighting: Error, Lost, Payment Pending, and Recheck should be highlighted
+        const statusClass = (
+            item.status === 'ERROR' || 
+            item.status === 'Error/Not Found' || 
+            item.status === 'LOST' ||
+            item.status === 'Payment pending carrier selection pending' ||
+            item.status === 'IN FORCE (RECHECK)'
+        ) ? 'error-cell' : '';
+        
+        // Integrity highlighting: Assumed should be highlighted
+        const integrityClass = (item.integrity && item.integrity === 'ASSUMED') ? 'error-cell' : '';
+        
+        // Balance highlighting: Non-zero balance should be highlighted
         const balanceClass = item.balance && parseFloat(item.balance.replace(/[^0-9.]/g, '')) > 0 ? 'error-cell' : '';
 
         return `
@@ -148,28 +162,40 @@ export const generateEmailHTML = (report, executionTime = null) => {
                         <td>${totalPolicies}</td>
                     </tr>
                     <tr>
-                        <td class="label-cell">Completed</td>
+                        <td class="label-cell">IN FORCE</td>
+                        <td>${inForce}</td>
+                    </tr>
+                    <tr>
+                        <td class="label-cell">IN FORCE (RECHECK)</td>
+                        <td class="${inForceRecheck > 0 ? 'error-cell' : ''}">${inForceRecheck}</td>
+                    </tr>
+                    <tr>
+                        <td class="label-cell">Completed (Total)</td>
                         <td>${completed}</td>
+                    </tr>
+                    <tr>
+                        <td class="label-cell">Lost (Non-Renewal)</td>
+                        <td class="${lost > 0 ? 'error-cell' : ''}">${lost}</td>
+                    </tr>
+                    <tr>
+                        <td class="label-cell">Assumed</td>
+                        <td class="${assumed > 0 ? 'error-cell' : ''}">${assumed}</td>
+                    </tr>
+                    <tr>
+                        <td class="label-cell">Payment Pending</td>
+                        <td class="${paymentPending > 0 ? 'error-cell' : ''}">${paymentPending}</td>
+                    </tr>
+                    <tr>
+                        <td class="label-cell">Paid</td>
+                        <td>${paid}</td>
+                    </tr>
+                    <tr>
+                        <td class="label-cell">Unpaid</td>
+                        <td class="${unpaid > 0 ? 'error-cell' : ''}">${unpaid}</td>
                     </tr>
                     <tr>
                         <td class="label-cell">Errored</td>
                         <td class="${errored > 0 ? 'error-cell' : ''}">${errored}</td>
-                    </tr>
-                    <tr>
-                        <td class="label-cell">Excluded (Carrier Left)</td>
-                        <td>${excluded}</td>
-                    </tr>
-                    <tr>
-                        <td class="label-cell">Secure</td>
-                        <td>${secure}</td>
-                    </tr>
-                    <tr>
-                        <td class="label-cell">Assumed/Depopulated</td>
-                        <td class="${assumed > 0 ? 'error-cell' : ''}">${assumed}</td>
-                    </tr>
-                    <tr>
-                        <td class="label-cell">Paid (No Balance)</td>
-                        <td>${paid}</td>
                     </tr>
                 </tbody>
             </table>
