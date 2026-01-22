@@ -374,19 +374,34 @@ export async function runCitizensAudit(policiesToAudit) {
                 await page.waitForTimeout(3000);
 
                 // --- 4A. INTEGRITY CHECKS ---
-                const noSelection = await page.getByRole('cell').filter({ hasText: 'No selection has yet been' }).isVisible();
-                if (noSelection) {
-                    result.status = 'CARRIER_LEFT';
-                    result.integrity = 'CARRIER CHANGED';
-                    result.isAssumed = true; // Mark as assumed/moved
+                const bodyText = await page.innerText('body');
+                
+                // Check 1: Non-Renewal (Requirement B) - Check FIRST before other checks
+                const isNonRenewal = bodyText.includes('scheduled for Non renew') || 
+                                     bodyText.toLowerCase().includes('scheduled for non-renewal')|| bodyText.toLowerCase().includes('scheduled for Nonrenewal- Underwriting');
+                if (isNonRenewal) {
+                    result.status = 'LOST';
+                    result.integrity = 'NON-RENEWAL SCHEDULED';
+                    console.log("   -> Alert: Policy scheduled for Non-renewal detected.");
                     report.push(result);
-                    continue; 
+                    continue; // Skip billing check for lost policies
                 }
 
-                // Check 2: Depopulation / Assumed Logic
-                const choiceDetailsVisible = await page.getByRole('cell').filter({ hasText: 'Policyholder Choice details' }).isVisible();
-                const bodyText = await page.innerText('body');
+                // Check 2: Carrier Left (Requirement A) - Flag but continue to billing
+                const noSelection = await page.getByRole('cell').filter({ hasText: 'No selection has yet been' }).isVisible();
+                let isPotentialCarrierLeft = false;
+                if (noSelection) {
+                    isPotentialCarrierLeft = true;
+                    result.status = 'CARRIER_LEFT'; // Default, may be updated after billing check
+                    result.integrity = 'CARRIER CHANGED';
+                    result.isAssumed = true; // Mark as assumed/moved
+                    console.log("   -> Alert: Potential Carrier Left detected. Checking billing on renewal term...");
+                    // Continue to billing check instead of skipping
+                }
 
+                // Check 3: Depopulation / Assumed Logic
+                const choiceDetailsVisible = await page.getByRole('cell').filter({ hasText: 'Policyholder Choice details' }).isVisible();
+                
                 // Specific phrase check
                 const isAssumedPhrase = bodyText.includes('This policy was assumed on');
                 const isAssumedKeyword = bodyText.toUpperCase().includes('ASSUMED') || bodyText.toUpperCase().includes('TAKEOUT');
@@ -395,47 +410,64 @@ export async function runCitizensAudit(policiesToAudit) {
                     result.integrity = 'ASSUMED ';
                     console.log("   -> Alert: Depopulation/Assumption detected.");
                     result.isAssumed = true; // Mark as assumed
-                } else {
-                    result.integrity = 'ENFORCED';
+                } else if (!isPotentialCarrierLeft) {
+                    result.integrity = 'IN FORCE';
                     result.status = 'ACTIVE';
                 }
 
                 // --- 4B. BILLING CHECKS ---
-                if (result.integrity.includes('SECURE')) {
-                    console.log("   - Checking Billing...");
-                    await page.getByRole('menuitem', { name: 'Billing' }).click();
-                    await page.waitForLoadState('domcontentloaded');
-                    await page.waitForTimeout(2000);
+                // Always check billing (even for potential Carrier Left cases)
+                console.log("   - Checking Billing...");
+                await page.getByRole('menuitem', { name: 'Billing' }).click();
+                await page.waitForLoadState('domcontentloaded');
+                await page.waitForTimeout(2000);
 
-                    // Dynamic Policy Period Selection
-                    const periodDropdown = page.getByLabel('Policy Period');
-                    if (await periodDropdown.isVisible()) {
-                        const optionValues = await periodDropdown.locator('option').evaluateAll(opts => opts.map(o => o.value));
-                        if (optionValues.length > 0) {
-                            await periodDropdown.selectOption(optionValues[optionValues.length - 1]);
-                            await page.waitForTimeout(2000);
-                        }
+                // Dynamic Policy Period Selection (Requirement D)
+                // Select the last option which is the latest/future renewal term
+                const periodDropdown = page.getByLabel('Policy Period');
+                if (await periodDropdown.isVisible()) {
+                    const optionValues = await periodDropdown.locator('option').evaluateAll(opts => opts.map(o => o.value));
+                    if (optionValues.length > 0) {
+                        // Select last option (latest/future renewal term)
+                        await periodDropdown.selectOption(optionValues[optionValues.length - 1]);
+                        await page.waitForTimeout(2000);
+                        console.log(`   -> Selected renewal term: ${optionValues.length} (latest option)`);
+                    }
+                }
+
+                // --- SCRAPE PAST DUE ONLY ---
+                console.log("   - Checking Past Due Amount on renewal term...");
+                try {
+                    // Selector from your previous codegen/logs
+                    const pastDueLocator = page.locator('#PolicyFile_Billing-Policy_BillingScreen-BilledOutstandingInputGroup-PastDue .gw-value-readonly-wrapper');
+                    await pastDueLocator.waitFor({ state: 'visible', timeout: 5000 });
+                    const pastDueText = await pastDueLocator.innerText();
+                    const pastDueVal = parseFloat(pastDueText.replace(/[^0-9.]/g, '')) || 0;
+
+                    result.balance = `$${pastDueVal.toFixed(2)}`;
+                    console.log(`   -> Past Due Found: ${result.balance}`);
+                    
+                    // Requirement A: If potential Carrier Left but balance is $0.00 (Paid) on renewal term, update to ACTIVE (renewed)
+                    if (isPotentialCarrierLeft && pastDueVal === 0) {
+                        result.status = 'ACTIVE';
+                        result.integrity = 'IN FORCE(Renewed)';
+                        result.isAssumed = false; // Reset assumed flag since it's renewed
+                        console.log("   -> Policy renewed: Balance is $0.00 on renewal term. Status updated to ACTIVE.");
+                    } else if (pastDueVal === 0) {
+                        result.isPaid = true;
                     }
 
-                    // --- SCRAPE PAST DUE ONLY ---
-                    console.log("   - Checking Past Due Amount...");
-                    try {
-                        // Selector from your previous codegen/logs
-                        const pastDueLocator = page.locator('#PolicyFile_Billing-Policy_BillingScreen-BilledOutstandingInputGroup-PastDue .gw-value-readonly-wrapper');
-                        await pastDueLocator.waitFor({ state: 'visible', timeout: 5000 });
-                        const pastDueText = await pastDueLocator.innerText();
-                        const pastDueVal = parseFloat(pastDueText.replace(/[^0-9.]/g, '')) || 0;
-
-                        result.balance = `$${pastDueVal.toFixed(2)}`;
-                        console.log(`   -> Past Due Found: ${result.balance}`);
-                        if (pastDueVal === 0) {
-                            result.isPaid = true;
-                        }
-
-                    } catch (e) {
-                        console.log("   -> Past Due element not found (likely $0.00 or hidden).");
-                        result.balance = "$0.00";
-                        result.isPaid = true;
+                } catch (e) {
+                    console.log("   -> Past Due element not found (likely $0.00 or hidden).");
+                    result.balance = "$0.00";
+                    result.isPaid = true;
+                    
+                    // Requirement A: If potential Carrier Left but balance check failed (assume $0.00), update to ACTIVE
+                    if (isPotentialCarrierLeft) {
+                        result.status = 'ACTIVE';
+                        result.integrity = 'IN FORCE(Renewed)';
+                        result.isAssumed = false;
+                        console.log("   -> Policy renewed: Balance check indicates $0.00. Status updated to ACTIVE.");
                     }
                 }
 
