@@ -398,7 +398,7 @@ export async function runCitizensAudit(policiesToAudit) {
         // --- STEP 6: SEND EMAIL (New Logic) ---
         console.log("📧 Sending Report via Email...");
 
-        const executionTime = Date.now() - startTime;
+        const executionTime = ((Date.now() - startTime) / 1000).toFixed(2); // seconds with 2 decimals
         const emailHTML = generateEmailHTML(report, executionTime);
 
         const mailBody = {

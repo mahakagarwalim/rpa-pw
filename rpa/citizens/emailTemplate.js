@@ -132,7 +132,7 @@ export const generateEmailHTML = (report, executionTime = null) => {
 <body>
     <div class="container">
         <h1>RPA Audit Report - Citizens</h1>
-        <div class="timestamp">Generated on: ${dateTime}${executionTime ? ` | Execution Time: ${executionTime}ms` : ''}</div>
+        <div class="timestamp">Generated on: ${dateTime} GMT${executionTime ? ` | Execution Time: ${executionTime}ms` : ''}</div>
         
         <div class="summary-section">
             <div class="summary-title">Summary</div>
