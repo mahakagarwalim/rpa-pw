@@ -178,7 +178,7 @@ export async function runCitizensAudit(policiesToAudit) {
                 policy_number: policyNum,
                 status: 'Unknown',
                 integrity: 'N/A',
-                balance: 'N/A',
+                balance: '$0.00',
                 isPaid: false,
                 isAssumed: false,
                 notes: ''
@@ -306,9 +306,6 @@ export async function runCitizensAudit(policiesToAudit) {
                         console.log(`   -> Past Due: $${pastDueVal.toFixed(2)}`);
                     }
 
-                    // Expand/click Current to read it if needed
-                    await policyPage.getByText('Current-').click().catch(() => { });
-                    await policyPage.waitForTimeout(300);
                     if (await currentLocator.isVisible().catch(() => false)) {
                         const currentText = await currentLocator.innerText();
                         currentVal = parseFloat(currentText.replace(/[^0-9.]/g, '')) || 0;
@@ -334,11 +331,11 @@ export async function runCitizensAudit(policiesToAudit) {
                             result.isPaid = true;
                             console.log("   -> No dues found. Status set to IN FORCE.");
                         } else {
-                            // Has dues - mark as "Payment pending carrier selection pending"
-                            result.status = 'Payment pending carrier selection pending';
-                            result.integrity = 'Payment pending carrier selection pending';
+                            // Has dues - mark as "Carrier Choice Pending"
+                            result.status = 'Carrier Choice Pending';
+                            result.integrity = 'IN FORCE (Choice Pending)';
                             result.isPaid = false;
-                            console.log("   -> Dues found. Status set to 'Payment pending carrier selection pending'.");
+                            console.log("   -> Dues found. Status set to 'Carrier Choice Pending'.");
                         }
                     } else {
                         // Normal case - check if paid or not (based on total outstanding)

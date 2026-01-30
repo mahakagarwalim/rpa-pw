@@ -15,12 +15,12 @@ export const generateEmailHTML = (report, executionTime = null) => {
 
     // Calculate summary statistics (aligned with citizensBot.js statuses)
     const totalPolicies = report.length;
-    const inForce = report.filter(r => ['ACTIVE', 'IN FORCE', 'IN FORCE (RECHECK)'].includes(r.status)).length;
+    const inForce = report.filter(r => [ 'IN FORCE', 'IN FORCE (RECHECK)'].includes(r.status)).length;
     const errored = report.filter(r => r.status === 'Error/Not Found').length;
     const cancelled = report.filter(r => r.status === 'CANCELLED').length;
     const lost = report.filter(r => r.status === 'LOST').length;
     const assumed = report.filter(r => r.status === 'ASSUMED' || r.isAssumed === true).length;
-    const paymentPending = report.filter(r => r.status === 'Payment pending carrier selection pending').length;
+    const unpaid = report.filter(r => ['IN FORCE', 'IN FORCE (RECHECK)','Payment pending carrier selection pending'].includes(r.status) && r.isPaid === false).length;
     const paid = report.filter(r => r.isPaid === true).length;
 
     // Generate table rows
@@ -169,8 +169,8 @@ export const generateEmailHTML = (report, executionTime = null) => {
                         <td class="${assumed > 0 ? 'error-cell' : ''}">${assumed}</td>
                     </tr>
                     <tr>
-                        <td class="label-cell">Payment Pending (Carrier Selection)</td>
-                        <td class="${paymentPending > 0 ? 'error-cell' : ''}">${paymentPending}</td>
+                        <td class="label-cell">Unpaid (In Force with Balance)</td>
+                        <td class="${unpaid > 0 ? 'error-cell' : ''}">${unpaid}</td>
                     </tr>
                     <tr>
                         <td class="label-cell">Paid (No Balance)</td>

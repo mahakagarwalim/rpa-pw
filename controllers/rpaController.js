@@ -6,9 +6,11 @@ import { getPoliciesForRenewalAutomation } from "../Database/Services/PrimaryDB/
 function mapResultToSuccessEnum(result) {
     if (!result) return "reschedule";
     const status = (result.status || "").toUpperCase();
+    const integrity = (result.integrity || "").toUpperCase();
     if (result.isAssumed || status === "ASSUMED") return "assumed";
-    if (["LOST", "CANCELLED"].includes(status) || (result.integrity || "").includes("NON-RENEWAL")) return "lost";
+    if (["LOST", "CANCELLED"].includes(status) || integrity.includes("NON-RENEWAL")) return "lost";
     if (result.isPaid && (status.includes("IN FORCE") || status === "ACTIVE")) return "paid";
+    if (!result.isPaid && (status.includes("IN FORCE") || status === "ACTIVE")) return "unpaid";
     return "reschedule";
 }
 
