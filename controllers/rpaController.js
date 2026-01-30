@@ -46,10 +46,10 @@ export const auditPolicies = async (req, res) => {
 
         } catch (dbErr) {
             console.error("[API] Database error:", dbErr);
-            return res.status(500).json({ 
-                success: false, 
+            return res.status(500).json({
+                success: false,
                 message: "Database error fetching policies.",
-                error: dbErr.message 
+                error: dbErr.message
             });
         }
     }
@@ -61,12 +61,12 @@ export const auditPolicies = async (req, res) => {
         // 2. Trigger Bot
         const auditResults = await runCitizensAudit(policies);
         const executionTime = Date.now() - startTime;
-        
+
         // Handle error case: bot returns { error: string, report: array }
         // Handle success case: bot returns array directly
         const isSuccess = !auditResults.error;
         const resultsArray = Array.isArray(auditResults) ? auditResults : (auditResults.report || []);
-        
+
         const isAnyAssumed = resultsArray.some(r => r.isAssumed === true);
         const areAllPaid = !isAnyAssumed && resultsArray.every(r => r.isPaid === true);
 
@@ -173,7 +173,7 @@ export const citizensProcess = async (req, res) => {
 
             return res.status(200).json({
                 status: "success",
-                message: "",
+                message: "RPA Process Finished Successfully",
                 results
             });
         } catch (error) {

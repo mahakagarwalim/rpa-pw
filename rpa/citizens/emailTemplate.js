@@ -15,12 +15,12 @@ export const generateEmailHTML = (report, executionTime = null) => {
 
     // Calculate summary statistics (aligned with citizensBot.js statuses)
     const totalPolicies = report.length;
-    const inForce = report.filter(r => [ 'IN FORCE', 'IN FORCE (RECHECK)'].includes(r.status)).length;
+    const inForce = report.filter(r => ['IN FORCE', 'IN FORCE (RECHECK)'].includes(r.status)).length;
     const errored = report.filter(r => r.status === 'Error/Not Found').length;
     const cancelled = report.filter(r => r.status === 'CANCELLED').length;
     const lost = report.filter(r => r.status === 'LOST').length;
     const assumed = report.filter(r => r.status === 'ASSUMED' || r.isAssumed === true).length;
-    const unpaid = report.filter(r => ['IN FORCE', 'IN FORCE (RECHECK)','Payment pending carrier selection pending'].includes(r.status) && r.isPaid === false).length;
+    const unpaid = report.filter(r => ['IN FORCE', 'IN FORCE (RECHECK)', 'Payment pending carrier selection pending'].includes(r.status) && r.isPaid === false).length;
     const paid = report.filter(r => r.isPaid === true).length;
 
     // Generate table rows
@@ -132,7 +132,7 @@ export const generateEmailHTML = (report, executionTime = null) => {
 <body>
     <div class="container">
         <h1>RPA Audit Report - Citizens</h1>
-        <div class="timestamp">Generated on: ${dateTime} GMT${executionTime ? ` | Execution Time: ${executionTime}ms` : ''}</div>
+        <div class="timestamp">Generated on: ${dateTime} GMT${executionTime ? ` | Execution Time: ${executionTime}s` : ''}</div>
         
         <div class="summary-section">
             <div class="summary-title">Summary</div>
