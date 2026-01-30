@@ -261,50 +261,64 @@ export async function runCitizensAudit(policiesToAudit) {
                 await policyPage.waitForTimeout(2000);
 
                 // Dynamic Policy Period Selection (Requirement D)
-                // Select the last option which is the latest/future renewal term
+                // Options are like "00080589-1", "00080589-2", ... "00080589-12" (string-sorted, so -10,-11,-12 come before -2).
+                // Pick the option with the highest numeric suffix = latest/renewal term.
                 const periodDropdown = policyPage.getByLabel('Policy Period');
                 if (await periodDropdown.isVisible()) {
                     const optionValues = await periodDropdown.locator('option').evaluateAll(opts => opts.map(o => o.value));
                     if (optionValues.length > 0) {
-                        // Select last option (latest/future renewal term)
-                        await periodDropdown.selectOption(optionValues[optionValues.length - 1]);
+                        const withSuffix = optionValues.map(v => {
+                            const suffix = v.includes('-') ? parseInt(v.split('-').pop(), 10) : 0;
+                            return { value: v, suffix: isNaN(suffix) ? 0 : suffix };
+                        });
+                        const latest = withSuffix.reduce((best, curr) => (curr.suffix > best.suffix ? curr : best), withSuffix[0]);
+                        await periodDropdown.selectOption(latest.value);
                         await policyPage.waitForTimeout(2000);
-                        console.log(`   -> Selected renewal term: ${optionValues.length} (latest option)`);
+                        console.log(`   -> Selected policy period: ${latest.value} (suffix ${latest.suffix}, latest of ${optionValues.length} options)`);
                     }
                 }
 
-                // --- BILLED OUTSTANDING: Past Due or Current (whichever is present) ---
-                console.log("   - Checking Billed Outstanding (Past Due or Current)...");
+                // --- BILLED OUTSTANDING: Check both Past Due and Current; use whichever has value, or sum if both have value ---
+                console.log("   - Checking Billed Outstanding (Past Due and Current)...");
                 try {
                     // Focus the Billed Outstanding group
                     await policyPage.getByRole('group', { name: 'Billed Outstanding' }).click();
                     await policyPage.waitForTimeout(500);
 
-                    let outstandingVal = null;
                     const pastDueLocator = policyPage.locator('#PolicyFile_Billing-Policy_BillingScreen-BilledOutstandingInputGroup-PastDue .gw-value-readonly-wrapper');
                     const currentLocator = policyPage.locator('#PolicyFile_Billing-Policy_BillingScreen-BilledOutstandingInputGroup-Current .gw-value-readonly-wrapper');
 
+                    let pastDueVal = 0;
+                    let currentVal = 0;
+
                     if (await pastDueLocator.isVisible().catch(() => false)) {
                         const pastDueText = await pastDueLocator.innerText();
-                        outstandingVal = parseFloat(pastDueText.replace(/[^0-9.]/g, '')) || 0;
-                        console.log(`   -> Past Due Found: $${outstandingVal.toFixed(2)}`);
-                    } else {
-                        // Past Due not present — use Current: click "Current-" then read value
-                        await policyPage.getByText('Current-').click().catch(() => { });
-                        await policyPage.waitForTimeout(300);
-                        if (await currentLocator.isVisible().catch(() => false)) {
-                            const currentText = await currentLocator.innerText();
-                            outstandingVal = parseFloat(currentText.replace(/[^0-9.]/g, '')) || 0;
-                            console.log(`   -> Current Found: $${outstandingVal.toFixed(2)}`);
-                        }
+                        pastDueVal = parseFloat(pastDueText.replace(/[^0-9.]/g, '')) || 0;
+                        console.log(`   -> Past Due: $${pastDueVal.toFixed(2)}`);
                     }
 
-                    const pastDueVal = outstandingVal !== null ? outstandingVal : 0;
-                    result.balance = `$${pastDueVal.toFixed(2)}`;
+                    // Expand/click Current to read it if needed
+                    await policyPage.getByText('Current-').click().catch(() => { });
+                    await policyPage.waitForTimeout(300);
+                    if (await currentLocator.isVisible().catch(() => false)) {
+                        const currentText = await currentLocator.innerText();
+                        currentVal = parseFloat(currentText.replace(/[^0-9.]/g, '')) || 0;
+                        console.log(`   -> Current: $${currentVal.toFixed(2)}`);
+                    }
+
+                    // Outstanding = Past Due + Current (whichever has value, or both summed)
+                    const outstandingVal = pastDueVal + currentVal;
+                    if (pastDueVal > 0 && currentVal > 0) {
+                        console.log(`   -> Outstanding (Past Due + Current): $${outstandingVal.toFixed(2)}`);
+                    } else if (outstandingVal > 0) {
+                        console.log(`   -> Outstanding: $${outstandingVal.toFixed(2)}`);
+                    }
+
+                    result.balance = `$${outstandingVal.toFixed(2)}`;
 
                     // Handle "No selection has yet been" case
                     if (isNoSelectionCase) {
-                        if (pastDueVal === 0) {
+                        if (outstandingVal === 0) {
                             // No dues - mark as IN FORCE
                             result.status = 'IN FORCE';
                             result.integrity = 'IN FORCE';
@@ -318,8 +332,8 @@ export async function runCitizensAudit(policiesToAudit) {
                             console.log("   -> Dues found. Status set to 'Payment pending carrier selection pending'.");
                         }
                     } else {
-                        // Normal case - check if paid or not
-                        if (pastDueVal === 0) {
+                        // Normal case - check if paid or not (based on total outstanding)
+                        if (outstandingVal === 0) {
                             result.status = 'IN FORCE';
                             result.isPaid = true;
                             console.log("   -> Policy is paid. Status: IN FORCE, isPaid: true");
