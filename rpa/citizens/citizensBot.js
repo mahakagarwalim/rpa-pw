@@ -59,7 +59,7 @@ export async function runCitizensAudit(policiesToAudit) {
         if (await portalPage.isVisible('input[name="Email Address"]')) {
             console.log("   - Entering Credentials (New Flow)...");
             await portalPage.getByRole('textbox', { name: 'Email Address' }).click(); // Focus
-            await portalPage.getByRole('textbox', { name: 'Email Address' }).fill(config.USERNAME2);
+            await portalPage.getByRole('textbox', { name: 'Email Address' }).fill(config.USERNAME);
             await portalPage.getByRole('textbox', { name: 'Password' }).click();
             await portalPage.getByRole('textbox', { name: 'Password' }).fill(config.PASSWORD);
             await portalPage.getByRole('button', { name: 'Sign in' }).click();
