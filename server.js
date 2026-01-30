@@ -44,5 +44,5 @@ app.listen(PORT, () => {
     console.info(`\nApplication started in ENV : [ ${ENV} | ${LOCAL && "LOCAL" || "SERVER"} ]`);
     console.info(`\nDatabase connection : [ ${SERVER_ENV} ]`);
     console.info(`\nCrons Enabled : [ ${ENABLE_CRONS} ] | Producers Enabled : [ ${SQS_PRODUCER} ] |  Consumer Enabled : [ ${SQS_CONSUMER} ] `)
-    console.info(`\nEPIC <> IM MS : Running on port : [ ${PORT} ]`);
+    console.info(`\nRPA PROJECT : Running on port : [ ${PORT} ]`);
 })
