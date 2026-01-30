@@ -13,19 +13,20 @@ export const generateEmailHTML = (report, executionTime = null) => {
         hour12: true
     });
 
-    // Calculate summary statistics
+    // Calculate summary statistics (aligned with citizensBot.js statuses)
     const totalPolicies = report.length;
-    const completed = report.filter(r => r.status === 'ACTIVE' || r.status === 'Active (Found)').length;
-    const errored = report.filter(r => r.status === 'ERROR' || r.status === 'Error/Not Found').length;
-    const excluded = report.filter(r => r.status === 'CARRIER_LEFT').length;
-    const secure = report.filter(r => r.integrity && r.integrity.includes('SECURE')).length;
-    const assumed = report.filter(r => r.isAssumed === true).length;
+    const inForce = report.filter(r => ['ACTIVE', 'IN FORCE', 'IN FORCE (RECHECK)'].includes(r.status)).length;
+    const errored = report.filter(r => r.status === 'Error/Not Found').length;
+    const cancelled = report.filter(r => r.status === 'CANCELLED').length;
+    const lost = report.filter(r => r.status === 'LOST').length;
+    const assumed = report.filter(r => r.status === 'ASSUMED' || r.isAssumed === true).length;
+    const paymentPending = report.filter(r => r.status === 'Payment pending carrier selection pending').length;
     const paid = report.filter(r => r.isPaid === true).length;
 
     // Generate table rows
     const tableRows = report.map((item, index) => {
-        const statusClass = (item.status === 'ERROR' || item.status === 'Error/Not Found' || item.status === 'CARRIER_LEFT') ? 'error-cell' : '';
-        const integrityClass = (item.integrity && (item.integrity.includes('ASSUMED') || item.integrity.includes('DEPOPULATED'))) ? 'error-cell' : '';
+        const statusClass = ['Error/Not Found', 'CANCELLED', 'LOST', 'ASSUMED', 'Payment pending carrier selection pending'].includes(item.status) ? 'error-cell' : '';
+        const integrityClass = (item.integrity && (item.integrity.includes('ASSUMED') || item.integrity.includes('CANCELLED') || item.integrity.includes('NON-RENEWAL') || item.integrity.includes('Payment pending carrier selection pending'))) ? 'error-cell' : '';
         const balanceClass = item.balance && parseFloat(item.balance.replace(/[^0-9.]/g, '')) > 0 ? 'error-cell' : '';
 
         return `
@@ -148,24 +149,28 @@ export const generateEmailHTML = (report, executionTime = null) => {
                         <td>${totalPolicies}</td>
                     </tr>
                     <tr>
-                        <td class="label-cell">Completed</td>
-                        <td>${completed}</td>
+                        <td class="label-cell">In Force</td>
+                        <td>${inForce}</td>
                     </tr>
                     <tr>
                         <td class="label-cell">Errored</td>
                         <td class="${errored > 0 ? 'error-cell' : ''}">${errored}</td>
                     </tr>
                     <tr>
-                        <td class="label-cell">Excluded (Carrier Left)</td>
-                        <td>${excluded}</td>
+                        <td class="label-cell">Cancelled</td>
+                        <td class="${cancelled > 0 ? 'error-cell' : ''}">${cancelled}</td>
                     </tr>
                     <tr>
-                        <td class="label-cell">Secure</td>
-                        <td>${secure}</td>
+                        <td class="label-cell">Lost (Non-Renewal)</td>
+                        <td class="${lost > 0 ? 'error-cell' : ''}">${lost}</td>
                     </tr>
                     <tr>
-                        <td class="label-cell">Assumed/Depopulated</td>
+                        <td class="label-cell">Assumed</td>
                         <td class="${assumed > 0 ? 'error-cell' : ''}">${assumed}</td>
+                    </tr>
+                    <tr>
+                        <td class="label-cell">Payment Pending (Carrier Selection)</td>
+                        <td class="${paymentPending > 0 ? 'error-cell' : ''}">${paymentPending}</td>
                     </tr>
                     <tr>
                         <td class="label-cell">Paid (No Balance)</td>

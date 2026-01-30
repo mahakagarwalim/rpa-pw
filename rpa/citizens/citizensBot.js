@@ -1,200 +1,3 @@
-// import { chromium } from 'playwright';
-// import config from './demoConfig.js';
-// import { getLatestCitizensCode } from './gmailHelper.js';
-
-// /**
-//  * Main Entry Point for API Trigger
-//  * @param {Array<string>} policiesToAudit - List of policy numbers from the request
-//  * @returns {Promise<Array>} - The audit report
-//  */
-// export async function runCitizensAudit(policiesToAudit) {
-//     console.log(`[Bot] Starting Audit for ${policiesToAudit.length} policies...`);
-
-//     // HEADLESS: FALSE for debugging/demo
-//     const browser = await chromium.launch({ headless: false, slowMo: 100 }); 
-//     const context = await browser.newContext();
-//     const page = await context.newPage();
-//     const report = [];
-
-//     try {
-//         // --- 1. LOGIN ---
-//         console.log(`[Bot] Navigating to ${config.LOGIN_URL}...`);
-//         await page.goto(config.LOGIN_URL);
-
-//         if (await page.isVisible('#j_username')) {
-//             await page.locator('#j_username').fill(config.USERNAME);
-//             await page.locator('#j_password').fill(config.PASSWORD);
-//             await page.getByRole('button', { name: 'Submit' }).click();
-//             await page.waitForLoadState('domcontentloaded');
-//         }
-
-//         // --- 2. SSO & MFA ---
-//         try {
-//             console.log("[Bot] Checking for PolicyCenter SSO...");
-//             await page.getByText('PolicyCenter®').nth(1).click();
-
-//             // Wait for SSO page to load
-//             await page.waitForSelector('input[name="Email Address"], [placeholder="Email Address"]', { timeout: 15000 });
-
-//             console.log("[Bot] Entering SSO Credentials...");
-//             await page.getByRole('textbox', { name: 'Email Address' }).fill(config.USERNAME2);
-//             await page.getByRole('textbox', { name: 'Password' }).fill(config.PASSWORD);
-//             await page.getByRole('button', { name: 'Sign in' }).click();
-
-//             // Wait for next screen (MFA Button OR Input)
-//             console.log("[Bot] Waiting for MFA Screen...");
-
-//             // Define Selectors
-//             const sendBtnSelector = 'button:has-text("Send verification code")';
-//             const inputSelector = 'input[name="Verification code"], [placeholder="Verification code"]';
-
-//             // Wait for EITHER the button OR the input to become visible
-//             try {
-//                 await Promise.race([
-//                     page.waitForSelector(sendBtnSelector, { timeout: 10000 }),
-//                     page.waitForSelector(inputSelector, { timeout: 10000 })
-//                 ]);
-//             } catch (e) {
-//                 console.log("[Bot] No specific MFA element found in 10s. Checking if already logged in...");
-//             }
-
-//             // Case A: "Send verification code" button needs clicking
-//             if (await page.isVisible(sendBtnSelector)) {
-//                 console.log("[Bot] Found 'Send verification code' button. Clicking...");
-//                 await page.click(sendBtnSelector);
-//                 // After clicking, strictly wait for input
-//                 await page.waitForSelector(inputSelector, { timeout: 15000 });
-//             }
-
-//             // Case B: Code Input is present
-//             if (await page.isVisible(inputSelector)) {
-//                 console.log("[Bot] MFA Input Detected. Fetching code from Gmail API...");
-
-//                 // API MODE: No manual fallback. Must use Gmail API.
-//                 const code = await getLatestCitizensCode();
-//                 if (!code) throw new Error("Could not retrieve MFA code from Gmail API.");
-
-//                 console.log(`[Bot] Entering code: ${code}`);
-//                 await page.fill(inputSelector, code);
-//                 await page.click('button:has-text("Verify code")');
-
-//                 // Handle "Continue" button if it appears
-//                 console.log("   - Waiting for Continue button...");
-//                 try {
-//                     await page.waitForSelector('button:has-text("Continue")', { timeout: 10000 });
-//                     await page.click('button:has-text("Continue")');
-//                 } catch (e) {
-//                     console.log("   - 'Continue' button not found, checking dashboard...");
-//                 }
-//             }
-
-//             await page.waitForLoadState('networkidle');
-//             // Hard wait to ensure Dashboard hydration (Critical for first search)
-//             console.log("[Bot] Waiting 5s for Dashboard...");
-//             await page.waitForTimeout(5000); 
-//             console.log("[Bot] Login Sequence Finished.");
-
-//         } catch (e) {
-//             console.error("[Bot] Login/MFA Flow Error:", e.message);
-//             // If login fails, we cannot proceed. Throw error to exit.
-//             throw e; 
-//         }
-
-//         // --- 3. AUDIT LOOP ---
-//         for (const policyNum of policiesToAudit) {
-//             const result = { policy_number: policyNum, status: 'Unknown', integrity: 'N/A', balance: 'N/A' };
-
-//             try {
-//                 console.log(`[Bot] Checking Policy: ${policyNum}...`);
-
-//                 const searchTab = page.locator('#TabBar-PolicyTab > .gw-action--expand-button');
-//                 const searchInput = page.locator('input[name*="PolicyRetrievalItem"]');
-
-//                 // Ensure Search Input is Visible
-//                 if (!(await searchInput.isVisible())) {
-//                     if (await searchTab.isVisible()) {
-//                         console.log("[Bot] Expanding Search Tab...");
-//                         await searchTab.click();
-//                         // Wait specifically for input to appear after click
-//                         try {
-//                             await searchInput.waitFor({ state: 'visible', timeout: 5000 });
-//                         } catch (e) {
-//                             console.log("[Bot] Retry clicking Search Tab...");
-//                             await searchTab.click(); // Retry click if failed
-//                             await searchInput.waitFor({ state: 'visible', timeout: 5000 });
-//                         }
-//                     } else {
-//                         throw new Error("Search Tab not found. Login might have failed.");
-//                     }
-//                 }
-
-//                 // Search
-//                 await searchInput.fill(policyNum);
-//                 await page.keyboard.press('Enter');
-
-//                 await page.waitForLoadState('networkidle');
-//                 await page.waitForTimeout(3000);
-
-//                 // Checks
-//                 const noSelection = await page.getByRole('cell').filter({ hasText: 'No selection has yet been' }).isVisible();
-//                 if (noSelection) {
-//                     result.status = 'CARRIER_LEFT';
-//                     result.integrity = 'CARRIER CHANGED';
-//                     report.push(result);
-//                     continue; 
-//                 }
-
-//                 const depopWarning = await page.getByRole('cell').filter({ hasText: 'Policyholder Choice details' }).isVisible();
-//                 result.integrity = depopWarning ? 'DEPOPULATION RISK' : 'SECURE';
-//                 result.status = 'ACTIVE';
-
-//                 // Billing
-//                 if (result.integrity === 'SECURE') {
-//                     await page.getByRole('menuitem', { name: 'Billing' }).click();
-//                     await page.waitForLoadState('domcontentloaded');
-//                     await page.waitForTimeout(2000);
-
-//                     // Dynamic Period Selection
-//                     const periodDropdown = page.getByLabel('Policy Period');
-//                     if (await periodDropdown.isVisible()) {
-//                         const optionValues = await periodDropdown.locator('option').evaluateAll(opts => opts.map(o => o.value));
-//                         if (optionValues.length > 0) {
-//                             await periodDropdown.selectOption(optionValues[optionValues.length - 1]);
-//                             await page.waitForTimeout(2000); 
-//                         }
-//                     }
-
-//                     // Scrape "Total Charges"
-//                     try {
-//                         const totalChargesLocator = page.getByText(/Total Charges\s*[\d,]+\.\d{2}/i).first();
-//                         await totalChargesLocator.waitFor({ state: 'visible', timeout: 5000 });
-//                         const fullText = await totalChargesLocator.innerText();
-//                         const amount = parseFloat(fullText.replace(/Total Charges/i, '').replace(/[^0-9.]/g, '')) || 0;
-//                         result.balance = `$${amount.toFixed(2)}`;
-//                     } catch (e) {
-//                         // Fallback: Scrape ONLY Past Due
-//                         const pastDue = await page.locator('#PolicyFile_Billing-Policy_BillingScreen-BilledOutstandingInputGroup-PastDue .gw-value-readonly-wrapper').innerText().catch(() => '0');
-//                         const pastDueVal = parseFloat(pastDue.replace(/[^0-9.]/g, '')) || 0;
-//                         result.balance = `$${pastDueVal.toFixed(2)}`;
-//                     }
-//                 }
-//             } catch (err) {
-//                 console.error(`[Bot] Error auditing ${policyNum}:`, err.message);
-//                 result.status = 'ERROR';
-//                 result.notes = err.message;
-//             }
-//             report.push(result);
-//         }
-
-//     } catch (error) {
-//         console.error("[Bot] Critical Error:", error);
-//         return { error: error.message, report };
-//     } finally {
-//         await browser.close();
-//     }
-
-//     return report;
-// }
 import { chromium } from 'playwright';
 import config from './demoConfig.js';
 import { getLatestCitizensCode } from './gmailHelper.js';
@@ -202,6 +5,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { sendEmailReport } from './emailHelper.js';
 import { generateEmailHTML, generateErrorHTML } from './emailTemplate.js';
+
 /**
  * Main Entry Point for API Trigger
  * @param {Array<string>} policiesToAudit - List of policy numbers from the request
@@ -211,175 +15,224 @@ export async function runCitizensAudit(policiesToAudit) {
     console.log(`[Bot] Starting Audit for ${policiesToAudit.length} policies...`);
     const startTime = Date.now();
 
-    // 1. LAUNCH BROWSER (Same config as your script)
+    // 1. LAUNCH BROWSER
     const browser = await chromium.launch({
-        headless: config.HEADLESS, // Using config or default false
-        slowMo: 100
+        headless: config.HEADLESS,
+        slowMo: 100,
+        args: ['--disable-blink-features=AutomationControlled', '--start-maximized']
     });
 
     const context = await browser.newContext();
-    const page = await context.newPage();
+    // This page is for the Initial Portal Login
+    let portalPage = await context.newPage();
+
+    // This variable will hold the PolicyCenter popup once opened
+    let policyPage = null;
+
     const report = [];
 
     try {
-        // --- 1. LOGIN PHASE 1: INITIAL PORTAL ---
+        // --- 1. LOGIN TO PORTAL ---
         console.log(`[Bot] Navigating to Portal: ${config.LOGIN_URL}...`);
-        await page.goto(config.LOGIN_URL);
+        await portalPage.goto(config.LOGIN_URL);
 
-        if (await page.isVisible('#j_username')) {
-            console.log("   - [Login 1/2] Entering Portal Credentials...");
-            await page.locator('#j_username').fill(config.USERNAME);
-            await page.locator('#j_password').fill(config.PASSWORD);
-            await page.getByRole('button', { name: 'Submit' }).click();
-            await page.waitForLoadState('domcontentloaded');
-        }
-
-        // --- 2. LOGIN PHASE 2: POLICY CENTER SSO ---
+        // Click "Login" if on the landing page
         try {
-            console.log("   - Clicking PolicyCenter...");
-            await page.getByText('PolicyCenter®').nth(1).click();
-
-            console.log("   - Waiting for SSO Page...");
-            await page.waitForSelector('input[name="Email Address"], [placeholder="Email Address"]', { timeout: 15000 });
-
-            console.log("   - [Login 2/2] Entering SSO Credentials...");
-            await page.getByRole('textbox', { name: 'Email Address' }).fill(config.USERNAME2);
-            await page.getByRole('textbox', { name: 'Password' }).fill(config.PASSWORD);
-
-            await page.getByRole('button', { name: 'Sign in' }).click();
-            await page.waitForLoadState('networkidle');
-            await page.waitForTimeout(2000);
-
-        } catch (e) {
-            console.log("   ⚠️ Note: PolicyCenter SSO step skipped or already active.");
-        }
-
-        // --- 3. MFA HANDLING ---
-        try {
-            console.log("   - Checking for MFA Challenge...");
-
-            const sendBtnSelector = 'button:has-text("Send verification code")';
-            const inputSelector = 'input[name="Verification code"], [placeholder="Verification code"]';
-
-            // Check if any MFA element exists quickly
-            try {
-                await page.waitForSelector(`${sendBtnSelector}, ${inputSelector}`, { timeout: 2000 });
-            } catch (e) { }
-
-            if (await page.isVisible(sendBtnSelector)) {
-                console.log("   - Clicking 'Send verification code'...");
-                await page.click(sendBtnSelector);
-                await page.waitForSelector(inputSelector, { timeout: 10000 });
+            const loginBtn = portalPage.getByRole('button', { name: 'Login' });
+            if (await loginBtn.isVisible({ timeout: 5000 })) {
+                await loginBtn.click();
             }
+        } catch (e) { }
 
-            if (await page.isVisible(inputSelector)) {
-                console.log("\n⚠️  MFA REQUIRED");
+        // Handle Credentials - Wait for either login form to appear
+        console.log("   - Waiting for Login Form...");
+        try {
+            await Promise.race([
+                portalPage.waitForSelector('input[name="Email Address"]', { state: 'visible', timeout: 20000 }),
+                portalPage.waitForSelector('#j_username', { state: 'visible', timeout: 20000 })
+            ]);
+        } catch (e) {
+            console.log("   - Login form wait timed out, checking if already logged in...");
+        }
 
-                // API MODE: No manual fallback. Must use Gmail API.
-                let mfaSuccess = false;
-                let retries = 0;
-                const maxRetries = 3;
+        // The new flow uses "Email Address" label usually
+        if (await portalPage.isVisible('input[name="Email Address"]')) {
+            console.log("   - Entering Credentials (New Flow)...");
+            await portalPage.getByRole('textbox', { name: 'Email Address' }).click(); // Focus
+            await portalPage.getByRole('textbox', { name: 'Email Address' }).fill(config.USERNAME2);
+            await portalPage.getByRole('textbox', { name: 'Password' }).click();
+            await portalPage.getByRole('textbox', { name: 'Password' }).fill(config.PASSWORD);
+            await portalPage.getByRole('button', { name: 'Sign in' }).click();
+        } else if (await portalPage.isVisible('#j_username')) {
+            // Fallback for old portal just in case
+            console.log("   - Entering Credentials (Old Flow)...");
+            await portalPage.locator('#j_username').fill(config.USERNAME);
+            await portalPage.locator('#j_password').fill(config.PASSWORD);
+            await portalPage.getByRole('button', { name: 'Submit' }).click();
+        }
 
-                while (!mfaSuccess && retries < maxRetries) {
-                    // API MODE: No manual fallback. Must use Gmail API.
-                    let code = await getLatestCitizensCode();
+        // --- 2. MFA HANDLING ---
+        console.log("   - Checking for MFA...");
+        const sendBtn = portalPage.getByRole('button', { name: 'Send verification code' });
+        const verifyInput = portalPage.getByRole('textbox', { name: 'Verification code' });
 
-                    if (!code) {
-                        if (retries === maxRetries - 1) {
-                            throw new Error("MFA Code not found via Gmail API. Cannot proceed in API mode.");
-                        }
-                        console.log("   - Code not found, retrying...");
+        try {
+            await Promise.race([
+                sendBtn.waitFor({ state: 'visible', timeout: 10000 }),
+                verifyInput.waitFor({ state: 'visible', timeout: 10000 })
+            ]);
+        } catch (e) { }
+
+        if (await sendBtn.isVisible()) {
+            console.log("   - Clicking Send Code...");
+            await sendBtn.click();
+            await verifyInput.waitFor({ state: 'visible', timeout: 10000 });
+        }
+
+        if (await verifyInput.isVisible()) {
+            console.log("   - MFA Required. Fetching code...");
+            let mfaSuccess = false;
+            let retries = 0;
+
+            while (!mfaSuccess && retries < 3) {
+                let code = await getLatestCitizensCode();
+                if (!code) { retries++; continue; }
+
+                await verifyInput.fill(code);
+                await portalPage.getByRole('button', { name: 'Verify code' }).click();
+
+                // Check if verification worked or failed
+                try {
+                    // Success usually leads to "Continue" button or dashboard
+                    await Promise.race([
+                        portalPage.getByRole('button', { name: 'Continue' }).waitFor({ state: 'visible', timeout: 5000 }),
+                        portalPage.getByRole('button', { name: config.AGENT_BUTTON_NAME }).waitFor({ state: 'visible', timeout: 5000 })
+                    ]);
+                    mfaSuccess = true;
+                } catch (e) {
+                    // Check for error
+                    if (await portalPage.getByText('That code is incorrect').isVisible()) {
+                        console.log("   - Incorrect code. Retrying...");
                         retries++;
-                        continue;
                     } else {
-                        console.log(`   - Auto-detected code: ${code}`);
-                    }
-
-                    await page.fill(inputSelector, code.trim());
-                    console.log("   - Verifying Code...");
-                    await page.click('button:has-text("Verify code")');
-
-                    // Check for "Incorrect Code" error message
-                    try {
-                        const errorLocator = page.getByText('That code is incorrect. Please try again.');
-                        await errorLocator.waitFor({ state: 'visible', timeout: 3000 });
-                        console.log("   ❌ Incorrect code detected. Retrying in 5s...");
-                        await page.waitForTimeout(5000);
-                        retries++;
-                        // Loop continues to fetch code again
-                    } catch (e) {
-                        // Error message did not appear -> Success
-                        console.log("   - Code accepted.");
+                        // Assuming success if error didn't appear and we didn't timeout hard
                         mfaSuccess = true;
                     }
                 }
-
-                if (!mfaSuccess) {
-                    throw new Error("Failed to authenticate MFA after multiple attempts.");
-                }
-
-                console.log("   - Waiting for Continue button...");
-                try {
-                    await page.waitForSelector('button:has-text("Continue")', { timeout: 10000 });
-                    await page.click('button:has-text("Continue")');
-                } catch (e) {
-                    console.log("   - 'Continue' button not found, checking dashboard...");
-                }
-
-                await page.waitForLoadState('networkidle');
-                console.log("   - Pausing 5s for Dashboard Hydration...");
-                await page.waitForTimeout(5000);
-
-                console.log("✅ Authentication Complete.");
-            } else {
-                console.log("   - No MFA Input found. Assuming login success.");
             }
 
-        } catch (e) {
-            console.log("   - Error in MFA flow: " + e.message);
-            // Critical failure if MFA fails
-            throw e;
+            if (!mfaSuccess) throw new Error("MFA Failed.");
         }
 
-        // --- 4. PROCESS POLICIES ---
+        // Click "Continue" if it exists
+        try {
+            const continueBtn = portalPage.getByRole('button', { name: 'Continue' });
+            if (await continueBtn.isVisible({ timeout: 5000 })) {
+                await continueBtn.click();
+                // Wait for navigation after clicking Continue
+                await portalPage.waitForLoadState('networkidle');
+            }
+        } catch (e) { }
+
+
+        // --- 3. NAVIGATE TO POLICY CENTER (POPUP) ---
+        console.log(`   - Looking for Agent Button: '${config.AGENT_BUTTON_NAME}'...`);
+
+        // Handle Modal (.cpic-modal-close) if it appears before/after interactions
+        const closeModal = async () => {
+            try {
+                const closeBtn = portalPage.locator('.cpic-modal-close.ml-3 > .fas');
+                if (await closeBtn.isVisible({ timeout: 3000 })) {
+                    await closeBtn.click();
+                    console.log("   - Closed Popup Modal.");
+                }
+            } catch (e) { }
+        };
+        await closeModal();
+
+        // 1. Click Agent Initials Button to open menu
+        const agentBtn = portalPage.getByRole('button', { name: 'AR' });
+        await agentBtn.waitFor({ state: 'visible', timeout: 30000 });
+        await agentBtn.click();
+
+        // 2. Wait for popup event BEFORE clicking link
+        const popupPromise = context.waitForEvent('page'); // Changed to context.waitForEvent('page')
+
+        // 3. Click "PolicyCenter" link
+        console.log("   - Clicking PolicyCenter...");
+        await portalPage.getByRole('link', { name: 'PolicyCenter' }).click();
+
+        // 4. Assign the new page
+        policyPage = await popupPromise;
+        await policyPage.waitForLoadState('domcontentloaded');
+        console.log("   - PolicyCenter Popup Opened.");
+
+        await portalPage.waitForLoadState('networkidle');
+        console.log("   - Pausing 5s for Dashboard Hydration...");
+        await portalPage.waitForTimeout(5000);
+
+        // --- 4. PROCESS POLICIES (Using policyPage) ---
         for (const policyNum of policiesToAudit) {
             console.log(`\n🔎 Checking Policy: ${policyNum}...`);
-            const result = { 
-                policy_number: policyNum, 
-                status: 'Unknown', 
-                integrity: 'N/A', 
+            const result = {
+                policy_number: policyNum,
+                status: 'Unknown',
+                integrity: 'N/A',
                 balance: 'N/A',
-                isPaid: false,    // Default false
-                isAssumed: false  // Default false
+                isPaid: false,
+                isAssumed: false,
+                notes: ''
             };
 
             try {
-                // Ensure the Policy Tab Search Input is visible
-                const searchInput = page.locator('input[name*="PolicyRetrievalItem"]');
-                const expandButton = page.locator('#TabBar-PolicyTab > .gw-action--expand-button');
+                // Ensure we are working on the popup page 'policyPage'
+                const searchTab = policyPage.locator('#TabBar-PolicyTab > .gw-action--expand-button');
+                const searchInput = policyPage.locator('input[name*="PolicyRetrievalItem"]');
 
+                // Expand search if hidden
                 if (!(await searchInput.isVisible())) {
-                    console.log("   - Expanding Search Tab...");
-                    await expandButton.click();
-                    // Wait for the animation to finish and input to become visible
-                    await searchInput.waitFor({ state: 'visible', timeout: 5000 });
+                    if (await searchTab.isVisible()) {
+                        await searchTab.click();
+                        try { await searchInput.waitFor({ state: 'visible', timeout: 5000 }); }
+                        catch (e) { await searchTab.click(); await searchInput.waitFor({ state: 'visible', timeout: 5000 }); }
+                    }
                 }
 
-                console.log("   - Searching...");
-
                 await searchInput.fill(policyNum);
-                await page.keyboard.press('Enter');
+                await policyPage.keyboard.press('Enter');
 
-                await page.waitForLoadState('networkidle');
-                await page.waitForTimeout(3000);
+                await policyPage.waitForLoadState('networkidle');
+                await policyPage.waitForTimeout(3000);
 
                 // --- 4A. INTEGRITY CHECKS ---
-                const bodyText = await page.innerText('body');
-                
-                // Check 1: Non-Renewal (Requirement B) - Check FIRST before other checks
-                const isNonRenewal = bodyText.includes('scheduled for Non renew') || 
-                                     bodyText.toLowerCase().includes('scheduled for non-renewal')|| bodyText.toLowerCase().includes('scheduled for Nonrenewal- Underwriting');
-                if (isNonRenewal) {
+                const bodyText = await policyPage.innerText('body');
+
+                // Check 1: Assumed Policy - FIRST CHECK (if assumed, no further checks needed)
+                const isAssumedPhrase = bodyText.includes('This policy was assumed on');
+                if (isAssumedPhrase) {
+                    result.status = 'ASSUMED';
+                    result.integrity = 'ASSUMED';
+                    result.isAssumed = true;
+                    console.log("   -> Alert: Policy assumed detected. Skipping all further checks.");
+                    report.push(result);
+                    continue;
+                }
+
+                // Check 2: Cancelled - "Policy not taken" (no billing check needed)
+                const canceledReasonLocator = policyPage.locator('#PolicyFile_Summary_Ext-Policy_SummaryExtScreen-Policy_Summary_DatesExtDV-CanceledReason').getByText('Policy not taken');
+                if (await canceledReasonLocator.isVisible().catch(() => false)) {
+                    result.status = 'CANCELLED';
+                    result.integrity = 'CANCELLED - Policy not taken';
+                    console.log("   -> Alert: Policy not taken (cancelled) detected. Skipping billing.");
+                    report.push(result);
+                    continue;
+                }
+
+                // Check 3: Non-Renewal (Requirement B) — "Policy {number} has been Scheduled for Nonrenewal- Underwriting."
+                const nonRenewalLocator = policyPage.locator('div').filter({
+                    hasText: new RegExp(`^Policy ${policyNum} has been Scheduled for Nonrenewal- Underwriting\\.$`)
+                }).nth(2);
+                if (await nonRenewalLocator.isVisible().catch(() => false)) {
                     result.status = 'LOST';
                     result.integrity = 'NON-RENEWAL SCHEDULED';
                     console.log("   -> Alert: Policy scheduled for Non-renewal detected.");
@@ -387,87 +240,111 @@ export async function runCitizensAudit(policiesToAudit) {
                     continue; // Skip billing check for lost policies
                 }
 
-                // Check 2: Carrier Left (Requirement A) - Flag but continue to billing
-                const noSelection = await page.getByRole('cell').filter({ hasText: 'No selection has yet been' }).isVisible();
-                let isPotentialCarrierLeft = false;
+                // Check 4: "No selection has yet been" - Check billing and set status accordingly
+                const noSelection = await policyPage.getByRole('cell').filter({ hasText: 'No selection has yet been' }).isVisible();
+                let isNoSelectionCase = false;
                 if (noSelection) {
-                    isPotentialCarrierLeft = true;
-                    result.status = 'CARRIER_LEFT'; // Default, may be updated after billing check
-                    result.integrity = 'CARRIER CHANGED';
-                    result.isAssumed = true; // Mark as assumed/moved
-                    console.log("   -> Alert: Potential Carrier Left detected. Checking billing on renewal term...");
-                    // Continue to billing check instead of skipping
-                }
-
-                // Check 3: Depopulation / Assumed Logic
-                const choiceDetailsVisible = await page.getByRole('cell').filter({ hasText: 'Policyholder Choice details' }).isVisible();
-                
-                // Specific phrase check
-                const isAssumedPhrase = bodyText.includes('This policy was assumed on');
-                const isAssumedKeyword = bodyText.toUpperCase().includes('ASSUMED') || bodyText.toUpperCase().includes('TAKEOUT');
-
-                if (choiceDetailsVisible || isAssumedPhrase || isAssumedKeyword) {
-                    result.integrity = 'ASSUMED ';
-                    console.log("   -> Alert: Depopulation/Assumption detected.");
-                    result.isAssumed = true; // Mark as assumed
-                } else if (!isPotentialCarrierLeft) {
+                    isNoSelectionCase = true;
+                    console.log("   -> Alert: 'No selection has yet been' detected. Checking billing...");
+                    // Will check billing below and set status based on balance
+                } else {
+                    // If not "No selection", mark as IN FORCE/ACTIVE (will check billing below)
                     result.integrity = 'IN FORCE';
                     result.status = 'ACTIVE';
                 }
 
                 // --- 4B. BILLING CHECKS ---
-                // Always check billing (even for potential Carrier Left cases)
+                // Check billing for policies that are not assumed (assumed policies already skipped above)
                 console.log("   - Checking Billing...");
-                await page.getByRole('menuitem', { name: 'Billing' }).click();
-                await page.waitForLoadState('domcontentloaded');
-                await page.waitForTimeout(2000);
+                await policyPage.getByRole('menuitem', { name: 'Billing' }).click();
+                await policyPage.waitForLoadState('domcontentloaded');
+                await policyPage.waitForTimeout(2000);
 
                 // Dynamic Policy Period Selection (Requirement D)
                 // Select the last option which is the latest/future renewal term
-                const periodDropdown = page.getByLabel('Policy Period');
+                const periodDropdown = policyPage.getByLabel('Policy Period');
                 if (await periodDropdown.isVisible()) {
                     const optionValues = await periodDropdown.locator('option').evaluateAll(opts => opts.map(o => o.value));
                     if (optionValues.length > 0) {
                         // Select last option (latest/future renewal term)
                         await periodDropdown.selectOption(optionValues[optionValues.length - 1]);
-                        await page.waitForTimeout(2000);
+                        await policyPage.waitForTimeout(2000);
                         console.log(`   -> Selected renewal term: ${optionValues.length} (latest option)`);
                     }
                 }
 
-                // --- SCRAPE PAST DUE ONLY ---
-                console.log("   - Checking Past Due Amount on renewal term...");
+                // --- BILLED OUTSTANDING: Past Due or Current (whichever is present) ---
+                console.log("   - Checking Billed Outstanding (Past Due or Current)...");
                 try {
-                    // Selector from your previous codegen/logs
-                    const pastDueLocator = page.locator('#PolicyFile_Billing-Policy_BillingScreen-BilledOutstandingInputGroup-PastDue .gw-value-readonly-wrapper');
-                    await pastDueLocator.waitFor({ state: 'visible', timeout: 5000 });
-                    const pastDueText = await pastDueLocator.innerText();
-                    const pastDueVal = parseFloat(pastDueText.replace(/[^0-9.]/g, '')) || 0;
+                    // Focus the Billed Outstanding group
+                    await policyPage.getByRole('group', { name: 'Billed Outstanding' }).click();
+                    await policyPage.waitForTimeout(500);
 
+                    let outstandingVal = null;
+                    const pastDueLocator = policyPage.locator('#PolicyFile_Billing-Policy_BillingScreen-BilledOutstandingInputGroup-PastDue .gw-value-readonly-wrapper');
+                    const currentLocator = policyPage.locator('#PolicyFile_Billing-Policy_BillingScreen-BilledOutstandingInputGroup-Current .gw-value-readonly-wrapper');
+
+                    if (await pastDueLocator.isVisible().catch(() => false)) {
+                        const pastDueText = await pastDueLocator.innerText();
+                        outstandingVal = parseFloat(pastDueText.replace(/[^0-9.]/g, '')) || 0;
+                        console.log(`   -> Past Due Found: $${outstandingVal.toFixed(2)}`);
+                    } else {
+                        // Past Due not present — use Current: click "Current-" then read value
+                        await policyPage.getByText('Current-').click().catch(() => { });
+                        await policyPage.waitForTimeout(300);
+                        if (await currentLocator.isVisible().catch(() => false)) {
+                            const currentText = await currentLocator.innerText();
+                            outstandingVal = parseFloat(currentText.replace(/[^0-9.]/g, '')) || 0;
+                            console.log(`   -> Current Found: $${outstandingVal.toFixed(2)}`);
+                        }
+                    }
+
+                    const pastDueVal = outstandingVal !== null ? outstandingVal : 0;
                     result.balance = `$${pastDueVal.toFixed(2)}`;
-                    console.log(`   -> Past Due Found: ${result.balance}`);
-                    
-                    // Requirement A: If potential Carrier Left but balance is $0.00 (Paid) on renewal term, update to ACTIVE (renewed)
-                    if (isPotentialCarrierLeft && pastDueVal === 0) {
-                        result.status = 'ACTIVE';
-                        result.integrity = 'IN FORCE(Renewed)';
-                        result.isAssumed = false; // Reset assumed flag since it's renewed
-                        console.log("   -> Policy renewed: Balance is $0.00 on renewal term. Status updated to ACTIVE.");
-                    } else if (pastDueVal === 0) {
-                        result.isPaid = true;
+
+                    // Handle "No selection has yet been" case
+                    if (isNoSelectionCase) {
+                        if (pastDueVal === 0) {
+                            // No dues - mark as IN FORCE
+                            result.status = 'IN FORCE';
+                            result.integrity = 'IN FORCE';
+                            result.isPaid = true;
+                            console.log("   -> No dues found. Status set to IN FORCE.");
+                        } else {
+                            // Has dues - mark as "Payment pending carrier selection pending"
+                            result.status = 'Payment pending carrier selection pending';
+                            result.integrity = 'Payment pending carrier selection pending';
+                            result.isPaid = false;
+                            console.log("   -> Dues found. Status set to 'Payment pending carrier selection pending'.");
+                        }
+                    } else {
+                        // Normal case - check if paid or not
+                        if (pastDueVal === 0) {
+                            result.status = 'IN FORCE';
+                            result.isPaid = true;
+                            console.log("   -> Policy is paid. Status: IN FORCE, isPaid: true");
+                        } else {
+                            result.status = 'IN FORCE';
+                            result.isPaid = false;
+                            console.log("   -> Policy has dues. Status: IN FORCE, isPaid: false");
+                        }
                     }
 
                 } catch (e) {
                     console.log("   -> Past Due element not found (likely $0.00 or hidden).");
                     result.balance = "$0.00";
-                    result.isPaid = true;
-                    
-                    // Requirement A: If potential Carrier Left but balance check failed (assume $0.00), update to ACTIVE
-                    if (isPotentialCarrierLeft) {
-                        result.status = 'ACTIVE';
-                        result.integrity = 'IN FORCE(Renewed)';
-                        result.isAssumed = false;
-                        console.log("   -> Policy renewed: Balance check indicates $0.00. Status updated to ACTIVE.");
+
+                    // Handle "No selection has yet been" case - assume no dues
+                    if (isNoSelectionCase) {
+                        result.status = 'IN FORCE (RECHECK)';
+                        result.integrity = 'IN FORCE';
+                        result.isPaid = true;
+                        console.log("   -> Balance check failed, assuming no dues. Status set to IN FORCE.");
+                    } else {
+                        // Normal case - assume paid
+                        result.status = 'IN FORCE (RECHECK)';
+                        result.isPaid = true;
+                        console.log("   -> Balance check failed, assuming paid. Status: IN FORCE, isPaid: true");
                     }
                 }
 
@@ -485,7 +362,7 @@ export async function runCitizensAudit(policiesToAudit) {
         const reportDir = path.join(process.cwd(), 'reports');
         try {
             await fs.mkdir(reportDir, { recursive: true });
-        } catch (e) {}
+        } catch (e) { }
 
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
         const filename = `citizens_audit_${timestamp}.json`;
@@ -497,10 +374,10 @@ export async function runCitizensAudit(policiesToAudit) {
 
         // --- STEP 6: SEND EMAIL (New Logic) ---
         console.log("📧 Sending Report via Email...");
-        
+
         const executionTime = Date.now() - startTime;
         const emailHTML = generateEmailHTML(report, executionTime);
-        
+
         const mailBody = {
             "to": ["satyam@insuredmine.com"],
             "subject": `RPA Audit Report - Citizens - ${new Date().toLocaleDateString()}`,
@@ -525,4 +402,3 @@ export async function runCitizensAudit(policiesToAudit) {
 
     return report;
 }
-
