@@ -261,7 +261,7 @@ export async function runCitizensAudit(policiesToAudit) {
                 await policyPage.waitForTimeout(2000);
 
                 // Dynamic Policy Period Selection (Requirement D)
-                // Options display like "00080589-1", "00080589-12" etc.; value may be empty, so use option text for parsing.
+                // Options display like "00080589-1", "00080589-12"; value is often "0" or empty — parse suffix from option text only.
                 // Pick the option with the highest numeric suffix = latest/renewal term.
                 const periodDropdown = policyPage.getByLabel('Policy Period');
                 if (await periodDropdown.isVisible()) {
@@ -270,8 +270,10 @@ export async function runCitizensAudit(policiesToAudit) {
                     );
                     if (options.length > 0) {
                         const withSuffix = options.map(opt => {
-                            const raw = (opt.value || opt.text) || '';
-                            const suffix = raw.includes('-') ? parseInt(raw.split('-').pop(), 10) : 0;
+                            const text = opt.text || '';
+                            // Parse period number: last run of digits (handles "00080589-1", "00080589-12", and non-ASCII hyphens)
+                            const match = text.match(/(\d+)\s*$/);
+                            const suffix = match ? parseInt(match[1], 10) : 0;
                             return { value: opt.value, text: opt.text, suffix: isNaN(suffix) ? 0 : suffix };
                         });
                         const latest = withSuffix.reduce((best, curr) => (curr.suffix > best.suffix ? curr : best), withSuffix[0]);
