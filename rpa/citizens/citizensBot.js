@@ -261,20 +261,27 @@ export async function runCitizensAudit(policiesToAudit) {
                 await policyPage.waitForTimeout(2000);
 
                 // Dynamic Policy Period Selection (Requirement D)
-                // Options are like "00080589-1", "00080589-2", ... "00080589-12" (string-sorted, so -10,-11,-12 come before -2).
+                // Options display like "00080589-1", "00080589-12" etc.; value may be empty, so use option text for parsing.
                 // Pick the option with the highest numeric suffix = latest/renewal term.
                 const periodDropdown = policyPage.getByLabel('Policy Period');
                 if (await periodDropdown.isVisible()) {
-                    const optionValues = await periodDropdown.locator('option').evaluateAll(opts => opts.map(o => o.value));
-                    if (optionValues.length > 0) {
-                        const withSuffix = optionValues.map(v => {
-                            const suffix = v.includes('-') ? parseInt(v.split('-').pop(), 10) : 0;
-                            return { value: v, suffix: isNaN(suffix) ? 0 : suffix };
+                    const options = await periodDropdown.locator('option').evaluateAll(opts =>
+                        opts.map(o => ({ value: o.value, text: (o.textContent || o.innerText || '').trim() }))
+                    );
+                    if (options.length > 0) {
+                        const withSuffix = options.map(opt => {
+                            const raw = (opt.value || opt.text) || '';
+                            const suffix = raw.includes('-') ? parseInt(raw.split('-').pop(), 10) : 0;
+                            return { value: opt.value, text: opt.text, suffix: isNaN(suffix) ? 0 : suffix };
                         });
                         const latest = withSuffix.reduce((best, curr) => (curr.suffix > best.suffix ? curr : best), withSuffix[0]);
-                        await periodDropdown.selectOption(latest.value);
+                        if (latest.value) {
+                            await periodDropdown.selectOption(latest.value);
+                        } else {
+                            await periodDropdown.selectOption({ label: latest.text });
+                        }
                         await policyPage.waitForTimeout(2000);
-                        console.log(`   -> Selected policy period: ${latest.value} (suffix ${latest.suffix}, latest of ${optionValues.length} options)`);
+                        console.log(`   -> Selected policy period: ${latest.text || latest.value} (suffix ${latest.suffix}, latest of ${options.length} options)`);
                     }
                 }
 
