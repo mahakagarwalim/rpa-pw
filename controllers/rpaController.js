@@ -1,4 +1,5 @@
 import { runCitizensAudit } from "../rpa/citizens/citizensBot.js";
+import { runProgressiveAudit } from "../rpa/progressive/progressiveBot.js";
 import { CreateRPALog } from "../Database/Services/SecondaryDB/RPALogCollection.Services.js";
 import { getPoliciesForRenewalAutomation } from "../Database/Services/PrimaryDB/DealboardCardsCollection.Services.js"; // Import new service
 
@@ -233,6 +234,123 @@ export const citizensProcess = async (req, res) => {
         });
     } catch (error) {
         console.error("[API] Citizens process error:", error);
+        return res.status(200).json({
+            status: "error",
+            message: error.message || "Internal error during RPA execution."
+        });
+    }
+};
+
+/**
+ * Progressive Process API: same contract as citizensProcess.
+ * Accepts single object or array of { policy_id, policy_number, agency_id, carrier_name, dealcard_id? }.
+ */
+export const progressiveProcess = async (req, res) => {
+    const body = req.body;
+
+    if (Array.isArray(body)) {
+        if (body.length === 0) {
+            return res.status(400).json({ status: "error", message: "Request body array cannot be empty." });
+        }
+        const policyNumbers = [];
+        const items = [];
+        for (let i = 0; i < body.length; i++) {
+            const p = body[i] && body[i].policy_number;
+            if (!p || !String(p).trim()) {
+                return res.status(400).json({
+                    status: "error",
+                    message: `Item at index ${i} is missing policy_number.`
+                });
+            }
+            policyNumbers.push(String(p).trim());
+            items.push({ policy_id: body[i].policy_id, policy_number: p, agency_id: body[i].agency_id, carrier_name: body[i].carrier_name, dealcard_id: body[i].dealcard_id });
+        }
+
+        try {
+            const auditResults = await runProgressiveAudit(policyNumbers);
+
+            if (auditResults && auditResults.error) {
+                return res.status(200).json({
+                    status: "error",
+                    message: auditResults.error
+                });
+            }
+
+            const report = Array.isArray(auditResults) ? auditResults : (auditResults?.report || []);
+            const results = items.map((item, idx) => {
+                const r = report[idx];
+                const success_enum = r ? mapResultToSuccessEnum(r) : "reschedule";
+                const isError = r && r.status && String(r.status).toUpperCase().includes("ERROR");
+                return {
+                    policy_id: item.policy_id,
+                    policy_number: item.policy_number,
+                    dealcard_id: item.dealcard_id,
+                    success_enum: isError ? "reschedule" : success_enum,
+                    ...(r && r.notes ? { notes: r.notes } : {})
+                };
+            });
+
+            return res.status(200).json({
+                status: "success",
+                message: "",
+                results
+            });
+        } catch (error) {
+            console.error("[API] Progressive process (batch) error:", error);
+            return res.status(200).json({
+                status: "error",
+                message: error.message || "Internal error during RPA execution."
+            });
+        }
+    }
+
+    const { policy_id, policy_number, agency_id, carrier_name, dealcard_id } = body || {};
+
+    if (!policy_number) {
+        return res.status(400).json({
+            status: "error",
+            message: "policy_number is required."
+        });
+    }
+
+    const policiesToAudit = [String(policy_number).trim()];
+    if (!policiesToAudit[0]) {
+        return res.status(400).json({
+            status: "error",
+            message: "policy_number cannot be empty."
+        });
+    }
+
+    try {
+        const auditResults = await runProgressiveAudit(policiesToAudit);
+
+        if (auditResults && auditResults.error) {
+            return res.status(200).json({
+                status: "error",
+                message: auditResults.error
+            });
+        }
+
+        const resultsArray = Array.isArray(auditResults) ? auditResults : (auditResults?.report || []);
+        const singleResult = resultsArray[0];
+
+        if (!singleResult || (singleResult.status && String(singleResult.status).toUpperCase().includes("ERROR"))) {
+            return res.status(200).json({
+                status: "error",
+                message: singleResult?.notes || singleResult?.status || "Policy could not be audited."
+            });
+        }
+
+        const successEnum = mapResultToSuccessEnum(singleResult);
+
+        return res.status(200).json({
+            status: "success",
+            message: "",
+            success_enum: successEnum,
+            ...(dealcard_id != null ? { dealcard_id } : {})
+        });
+    } catch (error) {
+        console.error("[API] Progressive process error:", error);
         return res.status(200).json({
             status: "error",
             message: error.message || "Internal error during RPA execution."
