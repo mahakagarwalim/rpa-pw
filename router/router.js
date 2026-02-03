@@ -1,6 +1,6 @@
 /** modules */
 import express from "express";
-import { auditPolicies, citizensProcess, progressiveProcess } from "../controllers/rpaController.js";
+import { auditPolicies, carrierProcess } from "../controllers/rpaController.js";
 
 
 /** initialization */
@@ -14,5 +14,4 @@ export const router = express.Router();
 
 // RPA Routes
 router.post('/rpa/audit', auditPolicies);
-router.post('/rpa/citizens/process', citizensProcess);
-router.post('/rpa/progressive/process', progressiveProcess);
+router.post('/rpa/process', carrierProcess);

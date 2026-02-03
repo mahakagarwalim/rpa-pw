@@ -54,8 +54,8 @@ export async function getLatestProgressiveCode() {
         // Search for "One-time passcode" as per the input field label in the snippet
         const query = 'subject:"One-time passcode" OR subject:"verification" newer_than:2m';
 
-        console.log(`   [Gmail] Waiting 10s for email propagation...`);
-        await new Promise(resolve => setTimeout(resolve, 10000));
+        console.log(`   [Gmail] Waiting 20s for email propagation...`);
+        await new Promise(resolve => setTimeout(resolve, 20000));
         console.log(`   [Gmail] Searching: ${query}`);
 
         const res = await gmail.users.messages.list({ userId: 'me', q: query, maxResults: 1 });
