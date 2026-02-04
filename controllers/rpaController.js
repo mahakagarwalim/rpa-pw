@@ -1,7 +1,8 @@
-import { runCitizensAudit } from "../rpa/citizens/citizensBot.js";
+import { runCitizensAudit, startCitizensSession, processCitizensPolicyBatch, closeCitizensSession } from "../rpa/citizens/citizensBot.js";
 import { runProgressiveAudit } from "../rpa/progressive/progressiveBot.js";
 import { CreateRPALog } from "../Database/Services/SecondaryDB/RPALogCollection.Services.js";
 import { getPoliciesForRenewalAutomation } from "../Database/Services/PrimaryDB/DealboardCardsCollection.Services.js"; // Import new service
+import crypto from "crypto";
 
 /** Maps a single policy audit result to the process API success_enum. */
 function mapResultToSuccessEnum(result) {
@@ -21,6 +22,9 @@ const CARRIER_RUNNERS = {
     citizens: runCitizensAudit,
     progressive: runProgressiveAudit
 };
+
+/** In-memory store for Citizens session (test API). session_id -> session object */
+const citizensSessions = new Map();
 
 export const auditPolicies = async (req, res) => {
     let { dealcard_id, policies } = req.body;
@@ -504,6 +508,86 @@ export const carrierProcess = async (req, res) => {
         return res.status(200).json({
             status: "error",
             message: error.message || "Internal error during RPA execution."
+        });
+    }
+};
+
+// --- Test API: Citizens session (3 steps for Postman) ---
+
+/** POST /api/rpa/citizens/session/start — Start browser, login, wait at dashboard. Returns session_id for later calls. */
+export const citizensSessionStart = async (req, res) => {
+    try {
+        const session = await startCitizensSession();
+        const session_id = crypto.randomUUID();
+        citizensSessions.set(session_id, session);
+        return res.status(200).json({
+            status: "success",
+            message: "Citizens session started. Use session_id for batch and close.",
+            session_id
+        });
+    } catch (error) {
+        console.error("[API] Citizens session start error:", error);
+        return res.status(500).json({
+            status: "error",
+            message: error.message || "Failed to start Citizens session."
+        });
+    }
+};
+
+/** POST /api/rpa/citizens/session/batch — Process one batch of policies. Body: { session_id, policy_numbers: string[] } */
+export const citizensSessionBatch = async (req, res) => {
+    const { session_id, policy_numbers } = req.body || {};
+    if (!session_id) {
+        return res.status(400).json({ status: "error", message: "session_id is required." });
+    }
+    const session = citizensSessions.get(session_id);
+    if (!session) {
+        return res.status(404).json({ status: "error", message: "Session not found or already closed. Call start first." });
+    }
+    const numbers = Array.isArray(policy_numbers) ? policy_numbers.map(String).filter(Boolean) : [];
+    if (numbers.length === 0) {
+        return res.status(400).json({ status: "error", message: "policy_numbers must be a non-empty array." });
+    }
+    try {
+        const results = await processCitizensPolicyBatch(session, numbers);
+        return res.status(200).json({
+            status: "success",
+            message: `Processed ${results.length} policies.`,
+            count: results.length,
+            results
+        });
+    } catch (error) {
+        console.error("[API] Citizens session batch error:", error);
+        return res.status(500).json({
+            status: "error",
+            message: error.message || "Batch processing failed."
+        });
+    }
+};
+
+/** POST /api/rpa/citizens/session/close — Close browser and clear session. Body: { session_id } */
+export const citizensSessionClose = async (req, res) => {
+    const { session_id } = req.body || {};
+    if (!session_id) {
+        return res.status(400).json({ status: "error", message: "session_id is required." });
+    }
+    const session = citizensSessions.get(session_id);
+    if (!session) {
+        return res.status(404).json({ status: "error", message: "Session not found or already closed." });
+    }
+    try {
+        await closeCitizensSession(session);
+        citizensSessions.delete(session_id);
+        return res.status(200).json({
+            status: "success",
+            message: "Citizens session closed."
+        });
+    } catch (error) {
+        console.error("[API] Citizens session close error:", error);
+        citizensSessions.delete(session_id);
+        return res.status(500).json({
+            status: "error",
+            message: error.message || "Failed to close session."
         });
     }
 };

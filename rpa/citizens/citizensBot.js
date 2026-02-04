@@ -19,8 +19,292 @@ function reportToCSV(report) {
     return [headers.join(','), ...rows].join('\n');
 }
 
+const AGENT_BUTTON_NAME = config.AGENT_BUTTON_NAME || 'AR';
+
 /**
- * Main Entry Point for API Trigger
+ * (1) Start browser, complete login, open PolicyCenter, and wait at Citizens dashboard.
+ * Caller can then call processCitizensPolicyBatch() for each batch and finally closeCitizensSession().
+ * @returns {Promise<{ browser, context, portalPage, policyPage }>} session to pass to batch and close
+ * @throws on login/MFA or PolicyCenter open failure
+ */
+export async function startCitizensSession() {
+    console.log("[Bot] Starting Citizens session (browser + login + dashboard)...");
+
+    const browser = await chromium.launch({
+        headless: config.HEADLESS,
+        slowMo: 100,
+        args: ['--disable-blink-features=AutomationControlled', '--start-maximized']
+    });
+
+    const context = await browser.newContext();
+    let portalPage = await context.newPage();
+    let policyPage = null;
+
+    await portalPage.goto(config.LOGIN_URL);
+    try {
+        const loginBtn = portalPage.getByRole('button', { name: 'Login' });
+        if (await loginBtn.isVisible({ timeout: 5000 })) await loginBtn.click();
+    } catch (e) { }
+
+    try {
+        await Promise.race([
+            portalPage.waitForSelector('input[name="Email Address"]', { state: 'visible', timeout: 20000 }),
+            portalPage.waitForSelector('#j_username', { state: 'visible', timeout: 20000 })
+        ]);
+    } catch (e) { }
+
+    if (await portalPage.isVisible('input[name="Email Address"]')) {
+        await portalPage.getByRole('textbox', { name: 'Email Address' }).click();
+        await portalPage.getByRole('textbox', { name: 'Email Address' }).fill(config.USERNAME);
+        await portalPage.getByRole('textbox', { name: 'Password' }).click();
+        await portalPage.getByRole('textbox', { name: 'Password' }).fill(config.PASSWORD);
+        await portalPage.getByRole('button', { name: 'Sign in' }).click();
+    } else if (await portalPage.isVisible('#j_username')) {
+        await portalPage.locator('#j_username').fill(config.USERNAME);
+        await portalPage.locator('#j_password').fill(config.PASSWORD);
+        await portalPage.getByRole('button', { name: 'Submit' }).click();
+    }
+
+    const sendBtn = portalPage.getByRole('button', { name: 'Send verification code' });
+    const verifyInput = portalPage.getByRole('textbox', { name: 'Verification code' });
+    try {
+        await Promise.race([
+            sendBtn.waitFor({ state: 'visible', timeout: 10000 }),
+            verifyInput.waitFor({ state: 'visible', timeout: 10000 })
+        ]);
+    } catch (e) { }
+
+    if (await sendBtn.isVisible()) {
+        await sendBtn.click();
+        await verifyInput.waitFor({ state: 'visible', timeout: 10000 });
+    }
+    if (await verifyInput.isVisible()) {
+        let mfaSuccess = false;
+        let retries = 0;
+        while (!mfaSuccess && retries < 3) {
+            const code = await getLatestCitizensCode();
+            if (!code) { retries++; continue; }
+            await verifyInput.fill(code);
+            await portalPage.getByRole('button', { name: 'Verify code' }).click();
+            try {
+                await Promise.race([
+                    portalPage.getByRole('button', { name: 'Continue' }).waitFor({ state: 'visible', timeout: 5000 }),
+                    portalPage.getByRole('button', { name: AGENT_BUTTON_NAME }).waitFor({ state: 'visible', timeout: 5000 })
+                ]);
+                mfaSuccess = true;
+            } catch (e) {
+                if (await portalPage.getByText('That code is incorrect').isVisible()) retries++;
+                else mfaSuccess = true;
+            }
+        }
+        if (!mfaSuccess) throw new Error("MFA Failed.");
+    }
+
+    try {
+        const continueBtn = portalPage.getByRole('button', { name: 'Continue' });
+        if (await continueBtn.isVisible({ timeout: 5000 })) {
+            await continueBtn.click();
+            await portalPage.waitForLoadState('networkidle');
+        }
+    } catch (e) { }
+
+    try {
+        const closeBtn = portalPage.locator('.cpic-modal-close.ml-3 > .fas');
+        if (await closeBtn.isVisible({ timeout: 3000 })) await closeBtn.click();
+    } catch (e) { }
+
+    const agentBtn = portalPage.getByRole('button', { name: 'AR' });
+    await agentBtn.waitFor({ state: 'visible', timeout: 30000 });
+    await agentBtn.click();
+    const popupPromise = context.waitForEvent('page');
+    await portalPage.getByRole('link', { name: 'PolicyCenter' }).click();
+    policyPage = await popupPromise;
+    await policyPage.waitForLoadState('domcontentloaded');
+    await portalPage.waitForLoadState('networkidle');
+    await portalPage.waitForTimeout(5000);
+
+    console.log("[Bot] Citizens session ready at dashboard.");
+    return { browser, context, portalPage, policyPage };
+}
+
+/**
+ * (2) Process one batch of policies using an existing Citizens session. Call repeatedly for each batch.
+ * Sends no email and does not save CSV; caller is responsible for sending the response for each batch.
+ * @param {{ browser, context, portalPage, policyPage }} session from startCitizensSession()
+ * @param {string[]} policyNumbers - policy numbers for this batch
+ * @returns {Promise<Array<{ policy_number, status, integrity, balance, isPaid, isAssumed, notes }>>} report for this batch
+ */
+export async function processCitizensPolicyBatch(session, policyNumbers) {
+    if (!session || !session.policyPage || !Array.isArray(policyNumbers) || policyNumbers.length === 0) {
+        return [];
+    }
+    const { policyPage } = session;
+    const report = [];
+
+    for (const policyNum of policyNumbers) {
+        console.log(`\n🔎 Checking Policy: ${policyNum}...`);
+        const result = {
+            policy_number: policyNum,
+            status: 'Unknown',
+            integrity: 'N/A',
+            balance: '$0.00',
+            isPaid: false,
+            isAssumed: false,
+            notes: ''
+        };
+
+        try {
+            const searchTab = policyPage.locator('#TabBar-PolicyTab > .gw-action--expand-button');
+            const searchInput = policyPage.locator('input[name*="PolicyRetrievalItem"]');
+            if (!(await searchInput.isVisible())) {
+                if (await searchTab.isVisible()) {
+                    await searchTab.click();
+                    try { await searchInput.waitFor({ state: 'visible', timeout: 5000 }); }
+                    catch (e) { await searchTab.click(); await searchInput.waitFor({ state: 'visible', timeout: 5000 }); }
+                }
+            }
+            await searchInput.fill(policyNum);
+            await policyPage.keyboard.press('Enter');
+            await policyPage.waitForLoadState('networkidle');
+            await policyPage.waitForTimeout(3000);
+
+            const bodyText = await policyPage.innerText('body');
+            if (bodyText.includes("User doesn't have permission to view this policy")) {
+                result.status = 'No Permission';
+                result.integrity = 'No permission';
+                result.notes = "User doesn't have permission to view this policy.";
+                report.push(result);
+                continue;
+            }
+            const isAssumedPhrase = bodyText.includes('This policy was assumed on');
+            if (isAssumedPhrase) {
+                result.status = 'ASSUMED';
+                result.integrity = 'ASSUMED';
+                result.isAssumed = true;
+                report.push(result);
+                continue;
+            }
+            const canceledReasonLocator = policyPage.locator('#PolicyFile_Summary_Ext-Policy_SummaryExtScreen-Policy_Summary_DatesExtDV-CanceledReason').getByText('Policy not taken');
+            if (await canceledReasonLocator.isVisible().catch(() => false)) {
+                result.status = 'CANCELLED';
+                result.integrity = 'CANCELLED - Policy not taken';
+                report.push(result);
+                continue;
+            }
+            const nonRenewalLocator = policyPage.locator('div').filter({
+                hasText: new RegExp(`^Policy ${policyNum} has been Scheduled for Nonrenewal- Underwriting\\.$`)
+            }).nth(2);
+            if (await nonRenewalLocator.isVisible().catch(() => false)) {
+                result.status = 'LOST';
+                result.integrity = 'NON-RENEWAL SCHEDULED';
+                report.push(result);
+                continue;
+            }
+            const noSelection = await policyPage.getByRole('cell').filter({ hasText: 'No selection has yet been' }).isVisible();
+            let isNoSelectionCase = false;
+            if (noSelection) {
+                isNoSelectionCase = true;
+            } else {
+                result.integrity = 'IN FORCE';
+                result.status = 'ACTIVE';
+            }
+
+            await policyPage.getByRole('menuitem', { name: 'Billing' }).click();
+            await policyPage.waitForLoadState('domcontentloaded');
+            await policyPage.waitForTimeout(2000);
+
+            const periodDropdown = policyPage.getByLabel('Policy Period');
+            if (await periodDropdown.isVisible()) {
+                const options = await periodDropdown.locator('option').evaluateAll(opts =>
+                    opts.map(o => ({ value: o.value, text: (o.textContent || o.innerText || '').trim() }))
+                );
+                if (options.length > 0) {
+                    const withSuffix = options.map(opt => {
+                        const text = opt.text || '';
+                        const match = text.match(/(\d+)\s*$/);
+                        const suffix = match ? parseInt(match[1], 10) : 0;
+                        return { value: opt.value, text: opt.text, suffix: isNaN(suffix) ? 0 : suffix };
+                    });
+                    const latest = withSuffix.reduce((best, curr) => (curr.suffix > best.suffix ? curr : best), withSuffix[0]);
+                    if (latest.value) await periodDropdown.selectOption(latest.value);
+                    else await periodDropdown.selectOption({ label: latest.text });
+                    await policyPage.waitForTimeout(2000);
+                }
+            }
+
+            try {
+                await policyPage.getByRole('group', { name: 'Billed Outstanding' }).click();
+                await policyPage.waitForTimeout(500);
+                const pastDueLocator = policyPage.locator('#PolicyFile_Billing-Policy_BillingScreen-BilledOutstandingInputGroup-PastDue .gw-value-readonly-wrapper');
+                const currentLocator = policyPage.locator('#PolicyFile_Billing-Policy_BillingScreen-BilledOutstandingInputGroup-Current .gw-value-readonly-wrapper');
+                let pastDueVal = 0, currentVal = 0;
+                if (await pastDueLocator.isVisible().catch(() => false)) {
+                    const t = await pastDueLocator.innerText();
+                    pastDueVal = parseFloat(t.replace(/[^0-9.]/g, '')) || 0;
+                }
+                if (await currentLocator.isVisible().catch(() => false)) {
+                    const t = await currentLocator.innerText();
+                    currentVal = parseFloat(t.replace(/[^0-9.]/g, '')) || 0;
+                }
+                const outstandingVal = pastDueVal + currentVal;
+                result.balance = `$${outstandingVal.toFixed(2)}`;
+                if (isNoSelectionCase) {
+                    if (outstandingVal === 0) {
+                        result.status = 'IN FORCE';
+                        result.integrity = 'IN FORCE';
+                        result.isPaid = true;
+                    } else {
+                        result.status = 'Carrier Choice Pending';
+                        result.integrity = 'IN FORCE (Choice Pending)';
+                        result.isPaid = false;
+                    }
+                } else {
+                    result.status = 'IN FORCE';
+                    result.isPaid = outstandingVal === 0;
+                }
+            } catch (e) {
+                result.balance = "$0.00";
+                if (isNoSelectionCase) {
+                    result.status = 'IN FORCE (RECHECK)';
+                    result.integrity = 'IN FORCE';
+                    result.isPaid = true;
+                } else {
+                    result.status = 'IN FORCE (RECHECK)';
+                    result.isPaid = true;
+                }
+            }
+        } catch (err) {
+            result.status = 'Error/Not Found';
+            result.notes = err.message;
+        }
+        report.push(result);
+    }
+
+    return report;
+}
+
+/**
+ * (3) Close the Citizens browser session. Call when RPA process is done (e.g. after all batches and a trigger/flag).
+ * @param {{ browser, context, portalPage, policyPage }} session from startCitizensSession()
+ */
+export async function closeCitizensSession(session) {
+    if (!session) return;
+    try {
+        if (session.browser) {
+            await session.browser.close();
+            console.log("[Bot] Citizens session closed.");
+        }
+    } catch (e) {
+        console.error("[Bot] Error closing Citizens session:", e.message);
+    }
+    session.browser = null;
+    session.context = null;
+    session.portalPage = null;
+    session.policyPage = null;
+}
+
+/**
+ * Main Entry Point for API Trigger (single run: login + all policies + close + email)
  * @param {Array<string>} policiesToAudit - List of policy numbers from the request
  * @returns {Promise<Array>} - The audit report
  */
