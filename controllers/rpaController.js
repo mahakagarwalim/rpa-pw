@@ -8,6 +8,7 @@ function mapResultToSuccessEnum(result) {
     if (!result) return "errored";
     const status = (result.status || "").toUpperCase();
     const integrity = (result.integrity || "").toUpperCase();
+    if (status.includes("ERROR") || status === "NO PERMISSION") return "check";
     if (result.isAssumed || status === "ASSUMED") return "assumed";
     if (["LOST", "CANCELLED"].includes(status) || integrity.includes("NON-RENEWAL")) return "lost";
     if (result.isPaid && (status.includes("IN FORCE") || status === "ACTIVE")) return "paid";

@@ -220,6 +220,16 @@ export async function runCitizensAudit(policiesToAudit) {
                 // --- 4A. INTEGRITY CHECKS ---
                 const bodyText = await policyPage.innerText('body');
 
+                // Check 0: No permission to view this policy — skip and move to next
+                if (bodyText.includes("User doesn't have permission to view this policy")) {
+                    result.status = 'No Permission';
+                    result.integrity = 'No permission';
+                    result.notes = "User doesn't have permission to view this policy.";
+                    console.log("   -> No permission to view this policy. Skipping.");
+                    report.push(result);
+                    continue;
+                }
+
                 // Check 1: Assumed Policy - FIRST CHECK (if assumed, no further checks needed)
                 const isAssumedPhrase = bodyText.includes('This policy was assumed on');
                 if (isAssumedPhrase) {
