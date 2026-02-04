@@ -5,14 +5,14 @@ import { getPoliciesForRenewalAutomation } from "../Database/Services/PrimaryDB/
 
 /** Maps a single policy audit result to the process API success_enum. */
 function mapResultToSuccessEnum(result) {
-    if (!result) return "reschedule";
+    if (!result) return "errored";
     const status = (result.status || "").toUpperCase();
     const integrity = (result.integrity || "").toUpperCase();
     if (result.isAssumed || status === "ASSUMED") return "assumed";
     if (["LOST", "CANCELLED"].includes(status) || integrity.includes("NON-RENEWAL")) return "lost";
     if (result.isPaid && (status.includes("IN FORCE") || status === "ACTIVE")) return "paid";
     if (!result.isPaid && (status.includes("IN FORCE") || status === "ACTIVE")) return "unpaid";
-    return "reschedule";
+    return "schedule";
 }
 
 /** Carrier name (path param) -> bot run function. Add new carriers here. */

@@ -6,6 +6,19 @@ import path from 'path';
 import { sendEmailReport } from './emailHelper.js';
 import { generateEmailHTML, generateErrorHTML } from './emailTemplate.js';
 
+/** Turn report array into CSV string (headers + rows, proper escaping). */
+function reportToCSV(report) {
+    if (!report || report.length === 0) return '';
+    const headers = ['policy_number', 'status', 'integrity', 'balance', 'isPaid', 'isAssumed', 'notes'];
+    const escape = (v) => {
+        const s = String(v ?? '');
+        if (/[,"\r\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+        return s;
+    };
+    const rows = report.map(r => headers.map(h => escape(r[h])).join(','));
+    return [headers.join(','), ...rows].join('\n');
+}
+
 /**
  * Main Entry Point for API Trigger
  * @param {Array<string>} policiesToAudit - List of policy numbers from the request
@@ -376,7 +389,7 @@ export async function runCitizensAudit(policiesToAudit) {
             report.push(result);
         }
 
-        // --- STEP 5: SAVE REPORT TO JSON FILE ---
+        // --- STEP 5: SAVE REPORT TO CSV FILE ---
         console.log("\n📝 Generating Report...");
 
         const reportDir = path.join(process.cwd(), 'reports');
@@ -385,10 +398,10 @@ export async function runCitizensAudit(policiesToAudit) {
         } catch (e) { }
 
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        const filename = `citizens_audit_${timestamp}.json`;
+        const filename = `citizens_audit_${timestamp}.csv`;
         const filepath = path.join(reportDir, filename);
 
-        await fs.writeFile(filepath, JSON.stringify(report, null, 4));
+        await fs.writeFile(filepath, reportToCSV(report));
 
         console.log(`✅ Report saved to: ${filepath}`);
 

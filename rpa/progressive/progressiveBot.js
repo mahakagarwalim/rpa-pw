@@ -4,6 +4,19 @@ import { getLatestProgressiveCode } from './gmailHelper.js';
 import fs from 'fs/promises';
 import path from 'path';
 
+/** Turn report array into CSV string (headers + rows, proper escaping). */
+function reportToCSV(report) {
+    if (!report || report.length === 0) return '';
+    const headers = ['policy_number', 'status', 'integrity', 'balance', 'isPaid', 'isAssumed'];
+    const escape = (v) => {
+        const s = String(v ?? '');
+        if (/[,"\r\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+        return s;
+    };
+    const rows = report.map(r => headers.map(h => escape(r[h])).join(','));
+    return [headers.join(','), ...rows].join('\n');
+}
+
 export async function runProgressiveAudit(policiesToAudit) {
     console.log(`[Bot] Starting Progressive Audit for ${policiesToAudit.length} policies...`);
 
@@ -145,11 +158,11 @@ export async function runProgressiveAudit(policiesToAudit) {
             report.push(result);
         }
 
-        // Save Report
+        // Save Report (CSV)
         const reportDir = path.join(process.cwd(), 'reports');
         try { await fs.mkdir(reportDir, { recursive: true }); } catch (e) { }
-        const filename = `progressive_audit_${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
-        await fs.writeFile(path.join(reportDir, filename), JSON.stringify(report, null, 4));
+        const filename = `progressive_audit_${new Date().toISOString().replace(/[:.]/g, '-')}.csv`;
+        await fs.writeFile(path.join(reportDir, filename), reportToCSV(report));
 
         console.log(`✅ Report saved to: ${filename}`);
 
