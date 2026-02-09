@@ -6,10 +6,16 @@ import path from 'path';
 import { sendEmailReport } from './emailHelper.js';
 import { generateEmailHTML, generateErrorHTML } from './emailTemplate.js';
 
+/** Extract assuming agency from body text. Pattern: "This policy was assumed on ... by Agency Name. Details" */
+function extractAssumingAgency(bodyText) {
+    const m = (bodyText || '').match(/This policy was assumed on\s+.+?\s+by\s+([^.]+?)\s*\./);
+    return m ? m[1].trim() : '';
+}
+
 /** Turn report array into CSV string (headers + rows, proper escaping). */
 function reportToCSV(report) {
     if (!report || report.length === 0) return '';
-    const headers = ['policy_number', 'status', 'integrity', 'balance', 'isPaid', 'isAssumed', 'notes'];
+    const headers = ['policy_number', 'status', 'integrity', 'balance', 'isPaid', 'isAssumed', 'assuming_agency', 'notes'];
     const escape = (v) => {
         const s = String(v ?? '');
         if (/[,"\r\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
@@ -20,6 +26,20 @@ function reportToCSV(report) {
 }
 
 const AGENT_BUTTON_NAME = config.AGENT_BUTTON_NAME || 'AR';
+
+/** Wait until policy summary has loaded (avoids reading stale or partial content). Polls for assumption message, no-permission, or summary screen. */
+async function waitForPolicySummaryReady(policyPage, timeoutMs = 3000) {
+    const deadline = Date.now() + timeoutMs;
+    const pollInterval = 400;
+    const summaryScreen = policyPage.locator('[id*="Policy_SummaryExtScreen"]').first();
+    while (Date.now() < deadline) {
+        const bodyText = await policyPage.innerText('body').catch(() => '');
+        if (bodyText.includes('This policy was assumed on') || bodyText.includes("User doesn't have permission to view this policy")) return;
+        if (await summaryScreen.isVisible().catch(() => false)) return;
+        await policyPage.waitForTimeout(pollInterval);
+    }
+}
+
 
 /**
  * (1) Start browser, complete login, open PolicyCenter, and wait at Citizens dashboard.
@@ -150,6 +170,7 @@ export async function processCitizensPolicyBatch(session, policyNumbers) {
             balance: '$0.00',
             isPaid: false,
             isAssumed: false,
+            assuming_agency: '',
             notes: ''
         };
 
@@ -166,7 +187,7 @@ export async function processCitizensPolicyBatch(session, policyNumbers) {
             await searchInput.fill(policyNum);
             await policyPage.keyboard.press('Enter');
             await policyPage.waitForLoadState('networkidle');
-            await policyPage.waitForTimeout(3000);
+            await waitForPolicySummaryReady(policyPage);
 
             const bodyText = await policyPage.innerText('body');
             if (bodyText.includes("User doesn't have permission to view this policy")) {
@@ -181,6 +202,7 @@ export async function processCitizensPolicyBatch(session, policyNumbers) {
                 result.status = 'ASSUMED';
                 result.integrity = 'ASSUMED';
                 result.isAssumed = true;
+                result.assuming_agency = extractAssumingAgency(bodyText);
                 report.push(result);
                 continue;
             }
@@ -195,7 +217,7 @@ export async function processCitizensPolicyBatch(session, policyNumbers) {
                 hasText: new RegExp(`^Policy ${policyNum} has been Scheduled for Nonrenewal- Underwriting\\.$`)
             }).nth(2);
             if (await nonRenewalLocator.isVisible().catch(() => false)) {
-                result.status = 'LOST';
+                result.status = 'CHECK';
                 result.integrity = 'NON-RENEWAL SCHEDULED';
                 report.push(result);
                 continue;
@@ -211,7 +233,7 @@ export async function processCitizensPolicyBatch(session, policyNumbers) {
 
             await policyPage.getByRole('menuitem', { name: 'Billing' }).click();
             await policyPage.waitForLoadState('domcontentloaded');
-            await policyPage.waitForTimeout(2000);
+            await policyPage.waitForTimeout(3000);
 
             const periodDropdown = policyPage.getByLabel('Policy Period');
             if (await periodDropdown.isVisible()) {
@@ -478,6 +500,7 @@ export async function runCitizensAudit(policiesToAudit) {
                 balance: '$0.00',
                 isPaid: false,
                 isAssumed: false,
+                assuming_agency: '',
                 notes: ''
             };
 
@@ -499,7 +522,7 @@ export async function runCitizensAudit(policiesToAudit) {
                 await policyPage.keyboard.press('Enter');
 
                 await policyPage.waitForLoadState('networkidle');
-                await policyPage.waitForTimeout(3000);
+                await waitForPolicySummaryReady(policyPage);
 
                 // --- 4A. INTEGRITY CHECKS ---
                 const bodyText = await policyPage.innerText('body');
@@ -520,6 +543,7 @@ export async function runCitizensAudit(policiesToAudit) {
                     result.status = 'ASSUMED';
                     result.integrity = 'ASSUMED';
                     result.isAssumed = true;
+                    result.assuming_agency = extractAssumingAgency(bodyText);
                     console.log("   -> Alert: Policy assumed detected. Skipping all further checks.");
                     report.push(result);
                     continue;
@@ -540,7 +564,7 @@ export async function runCitizensAudit(policiesToAudit) {
                     hasText: new RegExp(`^Policy ${policyNum} has been Scheduled for Nonrenewal- Underwriting\\.$`)
                 }).nth(2);
                 if (await nonRenewalLocator.isVisible().catch(() => false)) {
-                    result.status = 'LOST';
+                    result.status = 'CHECK';
                     result.integrity = 'NON-RENEWAL SCHEDULED';
                     console.log("   -> Alert: Policy scheduled for Non-renewal detected.");
                     report.push(result);

@@ -9,12 +9,19 @@ function mapResultToSuccessEnum(result) {
     if (!result) return "errored";
     const status = (result.status || "").toUpperCase();
     const integrity = (result.integrity || "").toUpperCase();
-    if (status.includes("ERROR") || status === "NO PERMISSION") return "check";
+    if (status.includes("ERROR") || status === "NO PERMISSION" || status === "CHECK") return "check";
     if (result.isAssumed || status === "ASSUMED") return "assumed";
-    if (["LOST", "CANCELLED"].includes(status) || integrity.includes("NON-RENEWAL")) return "lost";
+    if (["LOST", "CANCELLED"].includes(status)) return "lost";
     if (result.isPaid && (status.includes("IN FORCE") || status === "ACTIVE")) return "paid";
     if (!result.isPaid && (status.includes("IN FORCE") || status === "ACTIVE")) return "unpaid";
     return "schedule";
+}
+
+/** Maps bot report item to batch API enum: paid | unpaid | lost | assumed | check_by_agent */
+function mapToBatchRpaEnum(reportItem) {
+    const e = mapResultToSuccessEnum(reportItem);
+    if (e === "check" || e === "reschedule" || e === "schedule" || e === "errored") return "check_by_agent";
+    return e;
 }
 
 /** Carrier name (path param) -> bot run function. Add new carriers here. */
@@ -535,8 +542,12 @@ export const citizensSessionStart = async (req, res) => {
 };
 
 /** POST /api/rpa/citizens/session/batch — Process one batch of policies. Body: { session_id, policy_numbers: string[] } */
+/**
+ * Batch API: payload { agency_id, session_id, policies: [{ insurance_id, policy_number, dealcard_id }, ...] }.
+ * For each policy, runs RPA and attaches rpa_result. Returns result in the same structure with rpa_result per policy.
+ */
 export const citizensSessionBatch = async (req, res) => {
-    const { session_id, policy_numbers } = req.body || {};
+    const { agency_id, session_id, policies } = req.body || {};
     if (!session_id) {
         return res.status(400).json({ status: "error", message: "session_id is required." });
     }
@@ -544,17 +555,41 @@ export const citizensSessionBatch = async (req, res) => {
     if (!session) {
         return res.status(404).json({ status: "error", message: "Session not found or already closed. Call start first." });
     }
-    const numbers = Array.isArray(policy_numbers) ? policy_numbers.map(String).filter(Boolean) : [];
-    if (numbers.length === 0) {
-        return res.status(400).json({ status: "error", message: "policy_numbers must be a non-empty array." });
+    if (!policies || !Array.isArray(policies) || policies.length === 0) {
+        return res.status(400).json({ status: "error", message: "policies must be a non-empty array." });
     }
+
+    const policyNumbers = policies.map(p => (p && p.policy_number != null) ? String(p.policy_number).trim() : "").filter(Boolean);
+    if (policyNumbers.length === 0) {
+        return res.status(400).json({ status: "error", message: "Each policy must have policy_number." });
+    }
+
     try {
-        const results = await processCitizensPolicyBatch(session, numbers);
+        const rpaReport = await processCitizensPolicyBatch(session, policyNumbers);
+
+        const policiesWithResult = policies.map((policy, i) => {
+            const doc = policy;
+            const reportItem = rpaReport[i] || null;
+            const isError = reportItem && (String(reportItem.status || "").toUpperCase().includes("ERROR") || reportItem.status === "No Permission");
+            const rpa_result = {
+                status: isError ? "error" : "success",
+                enum: reportItem ? mapToBatchRpaEnum(reportItem) : "check_by_agent",
+                message: (reportItem && reportItem.notes) ? reportItem.notes : ""
+            };
+            return {
+                insurance_id: doc.insurance_id != null ? String(doc.insurance_id) : "",
+                policy_number: doc.policy_number != null ? String(doc.policy_number) : "",
+                dealcard_id: doc.dealcard_id != null ? String(doc.dealcard_id) : "",
+                rpa_result
+            };
+        });
+
         return res.status(200).json({
-            status: "success",
-            message: `Processed ${results.length} policies.`,
-            count: results.length,
-            results
+            result: {
+                agency_id: agency_id != null ? agency_id : "",
+                session_id,
+                policies: policiesWithResult
+            }
         });
     } catch (error) {
         console.error("[API] Citizens session batch error:", error);
