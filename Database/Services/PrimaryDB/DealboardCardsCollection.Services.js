@@ -1,6 +1,7 @@
 /** Modules */
 import mongoose from 'mongoose';
 import DealBoardCardsCollection from "../../Models/PrimaryCollections/DealBoardCards.Collection.js";
+import { dealboard_cards_collection } from "../../Models/PrimaryCollections/DealBoardCards.Collection.js";
 
 const ObjectId = mongoose.Types.ObjectId;
 
@@ -68,4 +69,20 @@ export const getPoliciesForRenewalAutomation = async (dealcardId, agencyId) => {
         console.error("Error in getPoliciesForRenewalAutomation:", e);
         throw e;
     }
+};
+
+/** aggregate - caller builds pipeline */
+export const aggregate_dealboard_cards = async (pipeline) => {
+    return dealboard_cards_collection.aggregate(pipeline).exec();
+};
+
+/** updateOne - caller builds filter, update, options (e.g. arrayFilters) */
+export const update_one_dealboard_cards = async (filter, update = {}, options = {}) => {
+    return dealboard_cards_collection.updateOne(filter, update, options);
+};
+
+/** bulkWrite - caller builds operations array (e.g. [{ updateOne: { filter, update, arrayFilters } }, ...]) */
+export const bulk_write_dealboard_cards = async (operations) => {
+    if (!Array.isArray(operations) || operations.length === 0) return { ok: 1, nModified: 0 };
+    return dealboard_cards_collection.bulkWrite(operations);
 };
