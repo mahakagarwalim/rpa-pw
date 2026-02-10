@@ -345,10 +345,11 @@ export async function closeCitizensSession(session, session_id, agency_id) {
 
     console.log("[Bot] Closing Citizens session...", session_id, "| agency_id:", agency_id);
 
-    if (!session) return;
+    if (!session) return { status: "success", message: "Session already closed." };
     try {
         if (session.browser) {
             await session.browser.close();
+
             console.log("[Bot] Citizens session closed.");
         }
     } catch (e) {
@@ -358,6 +359,7 @@ export async function closeCitizensSession(session, session_id, agency_id) {
     session.context = null;
     session.portalPage = null;
     session.policyPage = null;
+    return { status: "success", message: "Session closed successfully." }
 }
 
 /**
