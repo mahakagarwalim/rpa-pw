@@ -28,20 +28,7 @@ function reportToCSV(report) {
 
 const AGENT_BUTTON_NAME = config.AGENT_BUTTON_NAME || 'AR';
 
-/** Map report row to CPW rpa_result: { status, result, message }. result = paid | unpaid | lost | assumed | check_by_agent */
-function toRpaResult(reportRow) {
-    if (!reportRow) return { status: "error", result: "check_by_agent", message: "No result" };
-    const status = (reportRow.status || "").toUpperCase();
-    const isError = status.includes("ERROR") || status === "NO PERMISSION";
-    let result = "check_by_agent";
-    if (reportRow.isAssumed || status === "ASSUMED") result = "assumed";
-    else if (["LOST", "CANCELLED"].includes(status)) result = "lost";
-    else if (reportRow.isPaid && (status.includes("IN FORCE") || status === "ACTIVE")) result = "paid";
-    else if (!reportRow.isPaid && (status.includes("IN FORCE") || status === "ACTIVE")) result = "unpaid";
-    return { status: isError ? "error" : "success", result, message: reportRow.notes || "" };
-}
-
-/** Wait until policy summary has loaded (avoids reading stale or partial content). Polls for assumption message, no-permission, or summary screen. */
+ /** Wait until policy summary has loaded (avoids reading stale or partial content). Polls for assumption message, no-permission, or summary screen. */
 async function waitForPolicySummaryReady(policyPage, timeoutMs = 3000) {
     const deadline = Date.now() + timeoutMs;
     const pollInterval = 400;
@@ -236,7 +223,7 @@ export async function processCitizensPolicyBatch(agency_id, session_id, session,
                 result.status = 'No Permission';
                 result.integrity = 'No permission';
                 result.notes = "User doesn't have permission to view this policy.";
-                element.rpa_result = toRpaResult(result);
+                element.rpa_result = { ...result };
                 continue;
             }
             const isAssumedPhrase = bodyText.includes('This policy was assumed on');
@@ -245,14 +232,14 @@ export async function processCitizensPolicyBatch(agency_id, session_id, session,
                 result.integrity = 'ASSUMED';
                 result.isAssumed = true;
                 result.assuming_agency = extractAssumingAgency(bodyText);
-                element.rpa_result = toRpaResult(result);
+                element.rpa_result = { ...result };
                 continue;
             }
             const canceledReasonLocator = policyPage.locator('#PolicyFile_Summary_Ext-Policy_SummaryExtScreen-Policy_Summary_DatesExtDV-CanceledReason').getByText('Policy not taken');
             if (await canceledReasonLocator.isVisible().catch(() => false)) {
                 result.status = 'CANCELLED';
                 result.integrity = 'CANCELLED - Policy not taken';
-                element.rpa_result = toRpaResult(result);
+                element.rpa_result = { ...result };
                 continue;
             }
             const nonRenewalLocator = policyPage.locator('div').filter({
@@ -261,7 +248,7 @@ export async function processCitizensPolicyBatch(agency_id, session_id, session,
             if (await nonRenewalLocator.isVisible().catch(() => false)) {
                 result.status = 'CHECK';
                 result.integrity = 'NON-RENEWAL SCHEDULED';
-                element.rpa_result = toRpaResult(result);
+                element.rpa_result = { ...result };
                 continue;
             }
             const noSelection = await policyPage.getByRole('cell').filter({ hasText: 'No selection has yet been' }).isVisible();
@@ -342,7 +329,7 @@ export async function processCitizensPolicyBatch(agency_id, session_id, session,
             result.notes = err.message;
         }
 
-        element.rpa_result = toRpaResult(result);
+        element.rpa_result = { ...result };
     }
 
     console.log("[Bot] Completed Citizens policy batch...", session_id);
