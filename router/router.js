@@ -1,6 +1,7 @@
 /** modules */
 import express from "express";
 import { auditPolicies, carrierProcess, citizensSessionStart, citizensSessionBatch, citizensSessionClose } from "../controllers/rpaController.js";
+import { cpw_api_controller } from "../src/carrier_payments_workflow/cpw.controller.js";
 
 
 /** initialization */
@@ -20,3 +21,7 @@ router.post('/rpa/process', carrierProcess);
 router.post('/rpa/citizens/session/start', citizensSessionStart);
 router.post('/rpa/citizens/session/batch', citizensSessionBatch);
 router.post('/rpa/citizens/session/close', citizensSessionClose);
+
+
+/** RPA : Carrier Payments Workflow */
+router.post('/rpa/carrier-payments/workflow', cpw_api_controller);

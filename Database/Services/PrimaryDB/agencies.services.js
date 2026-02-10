@@ -1,5 +1,5 @@
 /** collection */
-import { agencies_collection } from "../../models/primary_collections/agencies.collection.js";
+import { agencies_collection } from "../../Models/PrimaryCollections/agencies.collection.js";
 
 
 /** find one */

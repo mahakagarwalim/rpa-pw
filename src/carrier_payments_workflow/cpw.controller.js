@@ -5,7 +5,7 @@ import mongoose from "mongoose";
 /** collection services */
 import { find_one_agencies, distinct_agencies } from "../../Database/Services/PrimaryDB/agencies.services.js";
 import { distinct_company_ids } from "../../Database/Services/PrimaryDB/companies.services.js";
-import { find_one_dealboard_info } from "../../Database/Services/PrimaryDB/dealboard_info.services.js";
+import { find_one_dealboard_info } from "../../Database/Services/PrimaryDB/dealboard_infos.services.js";
 import { find_one_renewal_automation_settings } from "../../Database/Services/PrimaryDB/renewal_automation_settings.services.js";
 
 
@@ -84,6 +84,7 @@ export const cpw_api_controller = async (req, res) => {
         const carrier_ids = await distinct_company_ids(carrier_filter);
 
         const carrier_ids_normalized = (carrier_ids ?? []).map((id) => (id?.toString ? id.toString() : id)).filter(Boolean);
+        
         if (carrier_ids_normalized.length === 0) {
             return res.status(404).json({ success: false, message: "No carriers found for the given agency and carrier_name" });
         }
@@ -113,7 +114,7 @@ export const cpw_api_controller = async (req, res) => {
             agency_id,
             carrier_ids_normalized,
             dealboard_ids,
-            { user_name: rpa_creds.username, password: rpa_creds.password },
+            { username: rpa_creds.username, password: rpa_creds.password },
             carrier_name
         );
         return res.status(200).json(run_result);
@@ -242,19 +243,20 @@ export const cpw_controller = async (agency_id, carrier_ids, dealboard_id, rpa_c
                 const payload = build_batch_payload(agency_id, session_id, policy_details);
                 console.log("[CPW] Batch", batch_num, "of", num_batches, "| skip:", skip, "| count:", payload.policies.length);
 
-                const batch_result = await processCitizensPolicyBatch(agency_id, session_id, payload.policies);
+                const batch_result = await processCitizensPolicyBatch(agency_id, session_id, start_result, payload.policies);
 
                 run_result.analysis[batch_index] = batch_result;
 
-                await update_dealcard_quotes_rpa_bulk(batch_result.policies ?? []);
+                // await update_dealcard_quotes_rpa_bulk(batch_result.policies ?? []);
             } catch (e) {
                 add_error("batch", `Error processing batch ${batch_index} (skip ${skip})`, e?.message ?? String(e));
                 console.error("[CPW] Batch error:", e);
             }
             batch_index += 1;
+            break; // TODO: remove this first test run : just for
         }
 
-        const end_result = await closeCitizensSession(session_id, agency_id);
+        const end_result = await closeCitizensSession(start_result, session_id, agency_id);
         run_result.end_session_response = end_result;
 
         if (end_result.status !== "success") {

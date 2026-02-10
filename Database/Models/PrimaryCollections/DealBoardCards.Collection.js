@@ -2,7 +2,7 @@
 import mongoose from "mongoose";
 
 /** db connection */
-import { primary_connection } from "../../database.config.js";
+import { PrimaryConnection } from "../../Config.js";
 
 /** Intialization */
 const Schema = mongoose.Schema;
@@ -579,4 +579,4 @@ const DealboardcardSchema = new Schema({
     timestamps: true
 });
 
-export const dealboard_cards_collection = primary_connection.model('DealBoardCards', DealboardcardSchema);
+export const DealBoardCardsCollection = PrimaryConnection.model('DealBoardCards', DealboardcardSchema);

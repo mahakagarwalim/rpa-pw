@@ -1,7 +1,7 @@
 'use strict';
 
 import mongoose, { Schema } from 'mongoose';
-import { primary_connection } from '../../database.config.js';
+import { PrimaryConnection } from '../../Config.js';
 
 const companies_schema = new mongoose.Schema({
     company_name: {
@@ -244,4 +244,4 @@ const companies_schema = new mongoose.Schema({
     }
   });
 
-export const companies_collection = primary_connection.model('Companie', companies_schema);
+export const companies_collection = PrimaryConnection.model('Companie', companies_schema);

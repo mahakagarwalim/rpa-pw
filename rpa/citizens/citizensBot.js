@@ -5,6 +5,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { sendEmailReport } from './emailHelper.js';
 import { generateEmailHTML, generateErrorHTML } from './emailTemplate.js';
+import { v4 } from 'uuid';
 
 /** Extract assuming agency from body text. Pattern: "This policy was assumed on ... by Agency Name. Details" */
 function extractAssumingAgency(bodyText) {
@@ -47,7 +48,22 @@ async function waitForPolicySummaryReady(policyPage, timeoutMs = 3000) {
  * @returns {Promise<{ browser, context, portalPage, policyPage }>} session to pass to batch and close
  * @throws on login/MFA or PolicyCenter open failure
  */
-export async function startCitizensSession() {
+export async function startCitizensSession(agency_id, carrier_name, rpa_creds) {
+
+    let session_id = v4();
+
+    console.log("[Bot] Starting Citizens session...", session_id);
+
+    if (!agency_id || !carrier_name || !rpa_creds) {
+        throw new Error("agency_id, carrier_name, and rpa_creds are required");
+    }
+
+    const { username, password } = rpa_creds;
+
+    if (!username || !password) {
+        throw new Error("user_name and password are required");
+    }
+
     console.log("[Bot] Starting Citizens session (browser + login + dashboard)...");
 
     const browser = await chromium.launch({
@@ -75,13 +91,13 @@ export async function startCitizensSession() {
 
     if (await portalPage.isVisible('input[name="Email Address"]')) {
         await portalPage.getByRole('textbox', { name: 'Email Address' }).click();
-        await portalPage.getByRole('textbox', { name: 'Email Address' }).fill(config.USERNAME);
+        await portalPage.getByRole('textbox', { name: 'Email Address' }).fill(username ?? config.USERNAME);
         await portalPage.getByRole('textbox', { name: 'Password' }).click();
-        await portalPage.getByRole('textbox', { name: 'Password' }).fill(config.PASSWORD);
+        await portalPage.getByRole('textbox', { name: 'Password' }).fill(password ?? config.PASSWORD);
         await portalPage.getByRole('button', { name: 'Sign in' }).click();
     } else if (await portalPage.isVisible('#j_username')) {
-        await portalPage.locator('#j_username').fill(config.USERNAME);
-        await portalPage.locator('#j_password').fill(config.PASSWORD);
+        await portalPage.locator('#j_username').fill(username ?? config.USERNAME);
+        await portalPage.locator('#j_password').fill(password ?? config.PASSWORD);
         await portalPage.getByRole('button', { name: 'Submit' }).click();
     }
 
@@ -144,7 +160,7 @@ export async function startCitizensSession() {
     await portalPage.waitForTimeout(5000);
 
     console.log("[Bot] Citizens session ready at dashboard.");
-    return { browser, context, portalPage, policyPage };
+    return { status: "success", session_id, message: "Citizens session started successfully", browser, context, portalPage, policyPage };
 }
 
 /**
@@ -154,14 +170,27 @@ export async function startCitizensSession() {
  * @param {string[]} policyNumbers - policy numbers for this batch
  * @returns {Promise<Array<{ policy_number, status, integrity, balance, isPaid, isAssumed, notes }>>} report for this batch
  */
-export async function processCitizensPolicyBatch(session, policyNumbers) {
-    if (!session || !session.policyPage || !Array.isArray(policyNumbers) || policyNumbers.length === 0) {
+export async function processCitizensPolicyBatch(agency_id, session_id, session, policy_details) {
+
+    if (!agency_id || !session_id) {
+        throw new Error("agency_id and session_id are required");
+    }
+    if (!session) {
+        throw new Error("session is required");
+    }
+
+    console.log("[Bot] Processing Citizens policy batch...", session_id);
+
+    if (!session || !session.policyPage || !Array.isArray(policy_details) || policy_details.length === 0) {
         return [];
     }
+
     const { policyPage } = session;
     const report = [];
 
-    for (const policyNum of policyNumbers) {
+    for (let element of policy_details) {
+        let { insurance_id, policy_number: policyNum, dealcard_id } = element;
+
         console.log(`\n🔎 Checking Policy: ${policyNum}...`);
         const result = {
             policy_number: policyNum,
@@ -298,18 +327,24 @@ export async function processCitizensPolicyBatch(session, policyNumbers) {
         } catch (err) {
             result.status = 'Error/Not Found';
             result.notes = err.message;
-        }
-        report.push(result);
+        };
+
+        element['rpa_result'] = result;
     }
 
-    return report;
+    console.log("[Bot] Completed Citizens policy batch...", session_id);
+
+    return policy_details;
 }
 
 /**
  * (3) Close the Citizens browser session. Call when RPA process is done (e.g. after all batches and a trigger/flag).
  * @param {{ browser, context, portalPage, policyPage }} session from startCitizensSession()
  */
-export async function closeCitizensSession(session) {
+export async function closeCitizensSession(session, session_id, agency_id) {
+
+    console.log("[Bot] Closing Citizens session...", session_id, "| agency_id:", agency_id);
+
     if (!session) return;
     try {
         if (session.browser) {

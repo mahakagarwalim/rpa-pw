@@ -2,7 +2,7 @@
 import mongoose from "mongoose";
 
 /** db connection */
-import { primary_connection } from "../../database.config.js";
+import { PrimaryConnection } from "../../Config.js";
 
 
 /** Intialization */
@@ -1363,5 +1363,5 @@ const AgencySchema = new Schema({
     timestamps: true
 });
 
-export const agencies_collection = primary_connection.model('Agency', AgencySchema);
+export const agencies_collection = PrimaryConnection.model('Agency', AgencySchema);
 

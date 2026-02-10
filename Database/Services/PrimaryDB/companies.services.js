@@ -1,5 +1,5 @@
 /** collection */
-import { companies_collection } from "../../models/primary_collections/companies.collection.js";
+import { companies_collection } from "../../Models/PrimaryCollections/companies.collection.js";
 
 export const find_all_companies = async (filter, project = {}, sort_by = { "_id": -1 }) => {
     const response = await companies_collection.find(filter, project).sort(sort_by).lean();

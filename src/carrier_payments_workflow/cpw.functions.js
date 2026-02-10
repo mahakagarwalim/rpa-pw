@@ -1,6 +1,7 @@
 /** modules */
 import mongoose from "mongoose";
 import axios from "axios";
+import moment from "moment";
 
 /** constants */
 import { RPA_RESULT_STATUS_SUCCESS, RPA_RESULT_STATUS_ERROR } from "./cpw.constants.js";
@@ -80,17 +81,17 @@ const end_of_day_utc = (d) => {
  * - (carrier_payment_rpa_status != true) OR (carrier_payment_rpa_status == true AND rpa_result.result == "unpaid")
  */
 const cpw_quotes_match = (carrier_ids) => {
-    const now = new Date();
-    const today = start_of_day_utc(now);
-    const d_minus_15 = new Date(today);
-    d_minus_15.setUTCDate(d_minus_15.getUTCDate() - 15);
-    const d_plus_5 = new Date(today);
-    d_plus_5.setUTCDate(d_plus_5.getUTCDate() + 5);
+    const today = moment.utc().startOf("day");
+    const d_minus_15_start = today.clone().subtract(15, "days");
+    const d_minus_15_end = today.clone().subtract(14, "days");
+    const today_end = today.clone().add(1, "day");
+    const d_plus_5_start = today.clone().add(5, "days");
+    const d_plus_5_end = today.clone().add(6, "days");
     const policy_end_date_in_allowed_days = {
         $or: [
-            { "quotes.insurance.policy_end_date": { $gte: d_minus_15, $lt: end_of_day_utc(d_minus_15) } },
-            { "quotes.insurance.policy_end_date": { $gte: today, $lt: end_of_day_utc(today) } },
-            { "quotes.insurance.policy_end_date": { $gte: d_plus_5, $lt: end_of_day_utc(d_plus_5) } }
+            { "quotes.insurance.policy_end_date": { $gte: d_minus_15_start.toDate(), $lt: d_minus_15_end.toDate() } },
+            { "quotes.insurance.policy_end_date": { $gte: today.toDate(), $lt: today_end.toDate() } },
+            { "quotes.insurance.policy_end_date": { $gte: d_plus_5_start.toDate(), $lt: d_plus_5_end.toDate() } }
         ]
     };
     const re_fetch_if_unpaid = {
@@ -101,7 +102,7 @@ const cpw_quotes_match = (carrier_ids) => {
     };
     return {
         $match: {
-            "quotes.insurance.carrier_id": { $in: db_match_any_id(carrier_ids) },
+            "quotes.insurance.company_id": { $in: db_match_any_id(carrier_ids) },
             "quotes.quoteStatus": "inProcess",
             $and: [ policy_end_date_in_allowed_days, re_fetch_if_unpaid ]
         }
