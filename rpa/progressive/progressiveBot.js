@@ -77,12 +77,14 @@ export async function runProgressiveAudit(policiesToAudit) {
                 await mfaInput.fill(code);
                 await page.getByRole('button', { name: 'Continue' }).click();
 
-                // Check if successful (Input should disappear)
-                try {
-                    await mfaInput.waitFor({ state: 'hidden', timeout: 5000 });
+                await page.waitForTimeout(2000);
+                const inputStillVisible = await mfaInput.isVisible().catch(() => false);
+                if (!inputStillVisible) {
                     mfaSuccess = true;
-                } catch (e) {
-                    console.log("   - MFA might have failed, retrying...");
+                } else {
+                    console.log("   - MFA input still visible after Continue, retrying...");
+                    await mfaInput.clear().catch(() => {});
+                    await page.waitForTimeout(2000);
                     retries++;
                 }
             }
