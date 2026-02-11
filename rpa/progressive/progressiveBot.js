@@ -101,10 +101,12 @@ export async function runProgressiveAudit(policiesToAudit) {
         } catch (e) { }
 
         console.log("✅ Login Complete.");
-        await page.waitForTimeout(3000);
+        await page.waitForTimeout(2000); // wait for dashboard to load
 
         // --- 2. PROCESS POLICIES ---
-        for (const policyNum of policiesToAudit) {
+        for (let i = 0; i < policiesToAudit.length; i++) {
+            const policyNum = policiesToAudit[i];
+            const isFirst = i === 0;
             console.log(`\n🔎 Checking Policy: ${policyNum}...`);
             const result = {
                 policy_number: policyNum,
@@ -116,40 +118,49 @@ export async function runProgressiveAudit(policiesToAudit) {
             };
 
             try {
-                // Direct Deep Link Navigation
-                const deepLink = `https://policyservicing.apps.foragentsonly.com/app/policy-hub/${policyNum}/policy-and-coverages`;
-                console.log(`   - Navigating to policy page...`);
-                await page.goto(deepLink, { waitUntil: 'domcontentloaded' });
+                if (isFirst) {
+                    // First policy: Policy Search (radio) + Policy Number textbox + Search (no deep link)
+                    console.log("   - Using Policy Search...");
+                    await page.getByText('Policy Search', { exact: true }).click();
+                    await page.waitForTimeout(500);
+                    await page.getByRole('textbox', { name: 'Policy Number' }).click();
+                    await page.getByRole('textbox', { name: 'Policy Number' }).fill(policyNum);
+                    await page.getByRole('button', { name: 'Search' }).click();
+                } else {
+                    // Later policies: Find policy textbox + Find Policy button
+                    console.log("   - Using Find policy...");
+                    await page.getByRole('textbox', { name: 'Find policy' }).click();
+                    await page.getByRole('textbox', { name: 'Find policy' }).fill(policyNum);
+                    await page.getByRole('button', { name: 'Find Policy' }).click();
+                }
+
                 await page.waitForTimeout(2000);
 
-                // Check for "Non-Renewal" Banner
-                // Assuming a generic warning text or class based on standard behavior
+                // Check for Non-Renewal
                 const nonRenewText = await page.getByText(/policy is being non-renewed/i).isVisible().catch(() => false);
-
                 if (nonRenewText) {
                     result.status = 'LOST';
                     result.integrity = 'NON-RENEWAL';
                     result.isPaid = false;
+                    console.log("   -> Non-renewal");
                 } else {
-                    // Check Billing Status
-                    // Snippet used: page.getByText('Billing status Paid to date')
-                    const paidStatus = await page.getByText('Paid to date').isVisible().catch(() => false);
+                    // Billing status: "Billing status Paid in full" or "Paid to date"
+                    const paidInFull = await page.getByText('Billing status Paid in full').isVisible().catch(() => false);
+                    const paidToDate = await page.getByText('Paid to date').isVisible().catch(() => false);
+                    const paidStatus = paidInFull || paidToDate;
 
                     if (paidStatus) {
                         result.status = 'ACTIVE';
                         result.integrity = 'SECURE';
                         result.balance = '$0.00';
                         result.isPaid = true;
-                        console.log("   -> Status: Paid to date");
+                        console.log("   -> Billing status: Paid in full / Paid to date");
                     } else {
-                        // Try to scrape amount if not "Paid to date"
-                        // Look for "Current Due" or similar structure
-                        // This is a guess based on standard layouts if specific selector isn't known
-                        result.status = 'ACTIVE'; // Assume active but unpaid
+                        result.status = 'ACTIVE';
                         result.integrity = 'SECURE';
                         result.isPaid = false;
-                        result.balance = 'Balance Due'; // Placeholder if we can't find exact amount
-                        console.log("   -> Status: Balance Due (Not 'Paid to date')");
+                        result.balance = 'Balance Due';
+                        console.log("   -> Balance Due");
                     }
                 }
 
