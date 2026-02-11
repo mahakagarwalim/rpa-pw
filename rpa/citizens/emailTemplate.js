@@ -19,13 +19,14 @@ export const generateEmailHTML = (report, executionTime = null) => {
     const errored = report.filter(r => r.status === 'Error/Not Found').length;
     const cancelled = report.filter(r => r.status === 'CANCELLED').length;
     const lost = report.filter(r => r.status === 'LOST').length;
+    const check = report.filter(r => r.status === 'CHECK').length; // non-renewal scheduled (not LOST)
     const assumed = report.filter(r => r.status === 'ASSUMED' || r.isAssumed === true).length;
     const unpaid = report.filter(r => ['IN FORCE', 'IN FORCE (RECHECK)', 'Payment pending carrier selection pending'].includes(r.status) && r.isPaid === false).length;
     const paid = report.filter(r => r.isPaid === true).length;
 
     // Generate table rows
     const tableRows = report.map((item, index) => {
-        const statusClass = ['Error/Not Found', 'CANCELLED', 'LOST', 'ASSUMED', 'Payment pending carrier selection pending'].includes(item.status) ? 'error-cell' : '';
+        const statusClass = ['Error/Not Found', 'CANCELLED', 'LOST', 'CHECK', 'ASSUMED', 'Payment pending carrier selection pending'].includes(item.status) ? 'error-cell' : '';
         const integrityClass = (item.integrity && (item.integrity.includes('ASSUMED') || item.integrity.includes('CANCELLED') || item.integrity.includes('NON-RENEWAL') || item.integrity.includes('Payment pending carrier selection pending'))) ? 'error-cell' : '';
         const balanceClass = item.balance && parseFloat(item.balance.replace(/[^0-9.]/g, '')) > 0 ? 'error-cell' : '';
 
@@ -161,7 +162,11 @@ export const generateEmailHTML = (report, executionTime = null) => {
                         <td class="${cancelled > 0 ? 'error-cell' : ''}">${cancelled}</td>
                     </tr>
                     <tr>
-                        <td class="label-cell">Lost (Non-Renewal)</td>
+                        <td class="label-cell">Check (Non-Renewal Scheduled)</td>
+                        <td class="${check > 0 ? 'error-cell' : ''}">${check}</td>
+                    </tr>
+                    <tr>
+                        <td class="label-cell">Lost</td>
                         <td class="${lost > 0 ? 'error-cell' : ''}">${lost}</td>
                     </tr>
                     <tr>

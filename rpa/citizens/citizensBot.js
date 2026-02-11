@@ -13,10 +13,21 @@ function extractAssumingAgency(bodyText) {
     return m ? m[1].trim() : '';
 }
 
+/** rpa_result.enum: one of paid, unpaid, assumed, check_by_agent */
+// ENUM = ['paid', 'unpaid', 'assumed', 'check_by_agent'];
+
+function getResultEnum(result) {
+    if (result.status === 'ASSUMED' || result.isAssumed) return 'assumed';
+    if (['CHECK', 'No Permission', 'CANCELLED', 'Error/Not Found', 'IN FORCE (RECHECK)'].includes(result.status)) return 'check_by_agent';
+    if (result.isPaid === true) return 'paid';
+    if (result.isPaid === false) return 'unpaid';
+    return 'check_by_agent';
+}
+
 /** Turn report array into CSV string (headers + rows, proper escaping). */
 function reportToCSV(report) {
     if (!report || report.length === 0) return '';
-    const headers = ['policy_number', 'status', 'integrity', 'balance', 'isPaid', 'isAssumed', 'assuming_agency', 'notes'];
+    const headers = ['policy_number', 'status', 'integrity', 'balance', 'isPaid', 'isAssumed', 'assuming_agency', 'notes', 'enum'];
     const escape = (v) => {
         const s = String(v ?? '');
         if (/[,"\r\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
@@ -216,13 +227,14 @@ export async function processCitizensPolicyBatch(agency_id, session_id, session,
             await searchInput.fill(policyNum);
             await policyPage.keyboard.press('Enter');
             await policyPage.waitForLoadState('networkidle');
-            await waitForPolicySummaryReady(policyPage);
+            await policyPage.waitForTimeout(2500);
 
             const bodyText = await policyPage.innerText('body');
             if (bodyText.includes("User doesn't have permission to view this policy")) {
                 result.status = 'No Permission';
                 result.integrity = 'No permission';
                 result.notes = "User doesn't have permission to view this policy.";
+                result.enum = getResultEnum(result);
                 element.rpa_result = { ...result };
                 continue;
             }
@@ -232,6 +244,7 @@ export async function processCitizensPolicyBatch(agency_id, session_id, session,
                 result.integrity = 'ASSUMED';
                 result.isAssumed = true;
                 result.assuming_agency = extractAssumingAgency(bodyText);
+                result.enum = getResultEnum(result);
                 element.rpa_result = { ...result };
                 continue;
             }
@@ -239,6 +252,7 @@ export async function processCitizensPolicyBatch(agency_id, session_id, session,
             if (await canceledReasonLocator.isVisible().catch(() => false)) {
                 result.status = 'CANCELLED';
                 result.integrity = 'CANCELLED - Policy not taken';
+                result.enum = getResultEnum(result);
                 element.rpa_result = { ...result };
                 continue;
             }
@@ -248,6 +262,7 @@ export async function processCitizensPolicyBatch(agency_id, session_id, session,
             if (await nonRenewalLocator.isVisible().catch(() => false)) {
                 result.status = 'CHECK';
                 result.integrity = 'NON-RENEWAL SCHEDULED';
+                result.enum = getResultEnum(result);
                 element.rpa_result = { ...result };
                 continue;
             }
@@ -329,6 +344,7 @@ export async function processCitizensPolicyBatch(agency_id, session_id, session,
             result.notes = err.message;
         }
 
+        result.enum = getResultEnum(result);
         element.rpa_result = { ...result };
     }
 
@@ -569,6 +585,7 @@ export async function runCitizensAudit(policiesToAudit) {
                     result.status = 'No Permission';
                     result.integrity = 'No permission';
                     result.notes = "User doesn't have permission to view this policy.";
+                    result.enum = getResultEnum(result);
                     console.log("   -> No permission to view this policy. Skipping.");
                     report.push(result);
                     continue;
@@ -581,6 +598,7 @@ export async function runCitizensAudit(policiesToAudit) {
                     result.integrity = 'ASSUMED';
                     result.isAssumed = true;
                     result.assuming_agency = extractAssumingAgency(bodyText);
+                    result.enum = getResultEnum(result);
                     console.log("   -> Alert: Policy assumed detected. Skipping all further checks.");
                     report.push(result);
                     continue;
@@ -591,6 +609,7 @@ export async function runCitizensAudit(policiesToAudit) {
                 if (await canceledReasonLocator.isVisible().catch(() => false)) {
                     result.status = 'CANCELLED';
                     result.integrity = 'CANCELLED - Policy not taken';
+                    result.enum = getResultEnum(result);
                     console.log("   -> Alert: Policy not taken (cancelled) detected. Skipping billing.");
                     report.push(result);
                     continue;
@@ -603,9 +622,10 @@ export async function runCitizensAudit(policiesToAudit) {
                 if (await nonRenewalLocator.isVisible().catch(() => false)) {
                     result.status = 'CHECK';
                     result.integrity = 'NON-RENEWAL SCHEDULED';
+                    result.enum = getResultEnum(result);
                     console.log("   -> Alert: Policy scheduled for Non-renewal detected.");
                     report.push(result);
-                    continue; // Skip billing check for lost policies
+                    continue; // Skip billing check for non-renewal
                 }
 
                 // Check 4: "No selection has yet been" - Check billing and set status accordingly
@@ -741,6 +761,7 @@ export async function runCitizensAudit(policiesToAudit) {
                 result.status = 'Error/Not Found';
                 result.notes = err.message;
             }
+            result.enum = getResultEnum(result);
             report.push(result);
         }
 
