@@ -8,11 +8,46 @@ import { RPA_RESULT_STATUS_SUCCESS, RPA_RESULT_STATUS_ERROR } from "./cpw.consta
 
 /** collection services */
 import { aggregate_dealboard_cards, update_one_dealboard_cards, bulk_write_dealboard_cards } from "../../Database/Services/PrimaryDB/DealboardCardsCollection.Services.js";
+import { find_many_agencies } from "../../Database/Services/PrimaryDB/agencies.services.js";
+import { create_one_cpw_run_log, find_many_cpw_run_logs } from "../../Database/Services/SecondaryDB/CPWRunLogCollection.Services.js";
 
 /** constants */
-import { APIS_STORE, BATCH_SIZE, PROCESS_BATCH_SIZE } from "./cpw.constants.js";
+import { PROCESS_BATCH_SIZE, CPW_CRON_CARRIERS } from "./cpw.constants.js";
 
 export const ObjectId = mongoose.Types.ObjectId;
+
+/**
+ * Get agencies that have valid rpa_creds for at least one CPW carrier.
+ * Returns { agency_id, agency_name, carriers: [{ carrier_name, rpa_creds }] }.
+ */
+export const get_agencies_with_rpa_creds = async () => {
+    const agencies = await find_many_agencies(
+        { archived: false, rpa_creds: { $exists: true, $ne: null, $type: "object" } },
+        { _id: 1, agency_name: 1, rpa_creds: 1, isParentGroupAgency: 1, default_Renewal_board: 1, default_Renewal_stage: 1 },
+        {},
+        0,
+        0
+    );
+    const result = [];
+    for (const a of agencies) {
+        const carriers = [];
+        for (const carrier_name of CPW_CRON_CARRIERS) {
+            const creds = get_rpa_creds_for_carrier(a, carrier_name);
+            if (creds?.is_enabled === true && creds?.username && creds?.password) {
+                carriers.push({ carrier_name, rpa_creds: creds });
+            }
+        }
+        if (carriers.length > 0) {
+            result.push({
+                agency_id: a._id?.toString?.() ?? a._id,
+                agency_name: a.agency_name ?? null,
+                agency_doc: a,
+                carriers
+            });
+        }
+    }
+    return result;
+};
 
 /**
  * Resolve rpa_creds from agency document: rpa_creds = { "citizen": { username, password }, "progressive": {}, ... }.
@@ -145,7 +180,7 @@ export const get_dealcards_count_for_carrier_payments = async (agency_id, carrie
  * @param {Array<string|ObjectId>} [dealboard_ids] - optional; filter by dealboard_info (board ids)
  * @returns {Promise<Array>}
  */
-export const get_dealcards_for_carrier_payments = async (agency_id, carrier_ids, skip = 0, limit = BATCH_SIZE, dealboard_ids = []) => {
+export const get_dealcards_for_carrier_payments = async (agency_id, carrier_ids, skip = 0, limit = PROCESS_BATCH_SIZE, dealboard_ids = []) => {
     try {
         const match = { agency_id: new ObjectId(agency_id), archived: false, createdFor: "renewal_automation" };
         if (Array.isArray(dealboard_ids) && dealboard_ids.length > 0) {
@@ -414,4 +449,122 @@ export const get_dealboard_id_for_cpw = (agency_doc, renewal_settings) => {
     }
 
     return [...ids];
+};
+
+/** ========== CPW Run Log (functions only; services do Mongo) ========== */
+
+/**
+ * Flatten analysis object into policy_details array.
+ * analysis = { "0": [...], "1": [...] }
+ */
+const flatten_analysis_to_policy_details = (analysis) => {
+    if (!analysis || typeof analysis !== 'object') return [];
+    const details = [];
+    const keys = Object.keys(analysis).sort((a, b) => Number(a) - Number(b));
+    for (const k of keys) {
+        const batch = analysis[k];
+        const arr = Array.isArray(batch) ? batch : batch?.policies;
+        if (!Array.isArray(arr)) continue;
+        for (const p of arr) {
+            const rpa = p?.rpa_result ?? {};
+            details.push({
+                dealcard_id: p?.dealcard_id ?? '',
+                insurance_id: p?.insurance_id ?? '',
+                policy_number: p?.policy_number ?? rpa?.policy_number ?? '',
+                status: rpa?.status ?? '',
+                integrity: rpa?.integrity ?? '',
+                balance: rpa?.balance ?? '',
+                notes: rpa?.notes ?? '',
+                isPaid: rpa?.isPaid ?? false,
+                isAssumed: rpa?.isAssumed ?? false,
+                assuming_agency: rpa?.assuming_agency ?? '',
+                enum: rpa?.enum ?? ''
+            });
+        }
+    }
+    return details;
+};
+
+/**
+ * Build CPW Run Log document from run_result.
+ * @param {object} run_result - From cpw_controller
+ * @param {Date} run_ended_at - When the run finished
+ * @returns {object} Document to save
+ */
+export const build_cpw_run_log_doc = (run_result, run_ended_at) => {
+    const run_started_at = run_result.run_started_at ? new Date(run_result.run_started_at) : new Date();
+    const ended = run_ended_at ? new Date(run_ended_at) : new Date();
+    const duration_ms = ended.getTime() - run_started_at.getTime();
+
+    let duration_formatted = '';
+    if (duration_ms >= 60000) {
+        const mins = Math.floor(duration_ms / 60000);
+        const secs = Math.floor((duration_ms % 60000) / 1000);
+        duration_formatted = `${mins}m ${secs}s`;
+    } else {
+        duration_formatted = `${Math.floor(duration_ms / 1000)}s`;
+    }
+
+    const report_date = start_of_day_utc(run_started_at);
+    const policy_details = flatten_analysis_to_policy_details(run_result.analysis);
+
+    return {
+        session_id: run_result.session_id ?? '',
+        agency_id: String(run_result.agency_id ?? ''),
+        report_date,
+        run_started_at,
+        run_ended_at: ended,
+        duration_ms,
+        duration_formatted,
+        agency_name: run_result.agency_name ?? null,
+        carrier_name: run_result.carrier_name ?? null,
+        total_dealcards: run_result.dealcards?.length ?? run_result.total_count ?? 0,
+        total_policies: run_result.policies_processed_count ?? run_result.total_count ?? 0,
+        success: run_result.success ?? false,
+        policy_details,
+        raw_run_result: run_result
+    };
+};
+
+/**
+ * Save a CPW run log. Builds doc and calls service.
+ * @param {object} run_result - From cpw_controller
+ * @param {Date} [run_ended_at] - When run ended (default: now)
+ */
+export const create_cpw_run_log = async (run_result, run_ended_at = new Date()) => {
+    const doc = build_cpw_run_log_doc(run_result, run_ended_at);
+    const log = await create_one_cpw_run_log(doc);
+    return log;
+};
+
+/**
+ * Get Mongo filter for date range.
+ * @param {Date} start_date - Start of range (UTC)
+ * @param {Date} end_date - End of range (UTC) - inclusive
+ */
+export const get_cpw_run_log_date_filter = (start_date, end_date) => {
+    const start = start_of_day_utc(start_date);
+    const end = new Date(end_date);
+    end.setUTCHours(23, 59, 59, 999);
+    return { report_date: { $gte: start, $lte: end } };
+};
+
+/**
+ * Find logs for a date range (inclusive of start of day).
+ * @param {Date} start_date - Start of range (UTC)
+ * @param {Date} end_date - End of range (UTC) - inclusive
+ */
+export const find_cpw_run_logs_by_date_range = async (start_date, end_date) => {
+    const filter = get_cpw_run_log_date_filter(start_date, end_date);
+    const logs = await find_many_cpw_run_logs(filter, { report_date: -1, run_started_at: -1 });
+    return logs;
+};
+
+/**
+ * Find logs for today (UTC).
+ */
+export const find_cpw_run_logs_today = async () => {
+    const today = new Date();
+    const logs = await find_cpw_run_logs_by_date_range(today, today);
+    return logs;
 };
