@@ -1,13 +1,11 @@
 /** modules */
 import { v4 } from "uuid";
-import mongoose from "mongoose";
 
 /** collection services */
 import { find_one_agencies, distinct_agencies } from "../../Database/Services/PrimaryDB/agencies.services.js";
 import { distinct_company_ids } from "../../Database/Services/PrimaryDB/companies.services.js";
 import { find_one_dealboard_info } from "../../Database/Services/PrimaryDB/dealboard_infos.services.js";
 import { find_one_renewal_automation_settings } from "../../Database/Services/PrimaryDB/renewal_automation_settings.services.js";
-
 
 /** constants */
 import { PROCESS_BATCH_SIZE } from "./cpw.constants.js";
@@ -23,9 +21,9 @@ import {
     get_rpa_creds_for_carrier,
     get_dealboard_id_for_cpw,
     normalize_dealboard_ids,
+    create_cpw_run_log,
     ObjectId
 } from "./cpw.functions.js";
-
 import { startCitizensSession, closeCitizensSession, processCitizensPolicyBatch } from "../../rpa/citizens/citizensBot.js";
 
 
@@ -84,7 +82,7 @@ export const cpw_api_controller = async (req, res) => {
         const carrier_ids = await distinct_company_ids(carrier_filter);
 
         const carrier_ids_normalized = (carrier_ids ?? []).map((id) => (id?.toString ? id.toString() : id)).filter(Boolean);
-        
+
         if (carrier_ids_normalized.length === 0) {
             return res.status(404).json({ success: false, message: "No carriers found for the given agency and carrier_name" });
         }
@@ -117,6 +115,16 @@ export const cpw_api_controller = async (req, res) => {
             { username: rpa_creds.username, password: rpa_creds.password },
             carrier_name
         );
+
+        if (run_result.session_id && run_result.agency_id) {
+            try {                
+                if (!run_result.run_ended_at) run_result.run_ended_at = new Date().toISOString();
+                await create_cpw_run_log(run_result, new Date(run_result.run_ended_at));
+            } catch (e) {
+                console.error('[CPW] Failed to save run log:', e);
+            }
+        };
+
         return res.status(200).json(run_result);
     } catch (error) {
         console.error("[CPW] cpw_api_controller error:", error);
@@ -161,16 +169,19 @@ export const cpw_controller = async (agency_id, carrier_ids, dealboard_id, rpa_c
         if (!agency_id) {
             add_error("validation", "agency_id is required");
             console.warn("[CPW] Validation failed: agency_id is missing");
+            run_result.run_ended_at = new Date().toISOString();
             return run_result;
         }
         if (!carrier_ids) {
             add_error("validation", "carrier_ids is required");
             console.warn("[CPW] Validation failed: carrier_ids is missing");
+            run_result.run_ended_at = new Date().toISOString();
             return run_result;
         }
         if (!dealboard_ids?.length) {
             add_error("validation", "dealboard_id is required (single id or array of ids)");
             console.warn("[CPW] Validation failed: dealboard_id is missing");
+            run_result.run_ended_at = new Date().toISOString();
             return run_result;
         }
 
@@ -190,6 +201,7 @@ export const cpw_controller = async (agency_id, carrier_ids, dealboard_id, rpa_c
 
         if (run_result.errors.length > 0) {
             run_result.errors.forEach(({ message }) => console.warn("[CPW] Validation failed:", message));
+            run_result.run_ended_at = new Date().toISOString();
             return run_result;
         }
 
@@ -206,6 +218,7 @@ export const cpw_controller = async (agency_id, carrier_ids, dealboard_id, rpa_c
         } catch (e) {
             add_error("count", "Failed to get dealcards count", e?.message ?? String(e));
             console.error("[CPW] get_dealcards_count error:", e);
+            run_result.run_ended_at = new Date().toISOString();
             return run_result;
         }
 
@@ -213,6 +226,7 @@ export const cpw_controller = async (agency_id, carrier_ids, dealboard_id, rpa_c
 
         if (total_count === 0) {
             run_result.success = true;
+            run_result.run_ended_at = new Date().toISOString();
             console.log("[CPW] No documents to process.");
             return run_result;
         }
@@ -222,6 +236,7 @@ export const cpw_controller = async (agency_id, carrier_ids, dealboard_id, rpa_c
         run_result.start_session_response = start_result;
         if (start_result.status !== "success" || !start_result.session_id) {
             add_error("session", "start_session did not return success or session_id");
+            run_result.run_ended_at = new Date().toISOString();
             return run_result;
         }
         const session_id = start_result.session_id;
@@ -247,13 +262,12 @@ export const cpw_controller = async (agency_id, carrier_ids, dealboard_id, rpa_c
 
                 run_result.analysis[batch_index] = batch_result;
 
-                // await update_dealcard_quotes_rpa_bulk(batch_result.policies ?? []);
+                await update_dealcard_quotes_rpa_bulk(batch_result?.policies ?? batch_result ?? []);
             } catch (e) {
                 add_error("batch", `Error processing batch ${batch_index} (skip ${skip})`, e?.message ?? String(e));
                 console.error("[CPW] Batch error:", e);
             }
-            batch_index += 1;
-            break; // TODO: remove this first test run : just for
+            batch_index += 1;        
         }
 
         const end_result = await closeCitizensSession(start_result, session_id, agency_id);
@@ -267,6 +281,7 @@ export const cpw_controller = async (agency_id, carrier_ids, dealboard_id, rpa_c
         run_result.policies_processed_count = all_dealcards.length;
         run_result.dealcards = all_dealcards;
         run_result.success = run_result.errors.length === 0;
+        run_result.run_ended_at = new Date().toISOString();
         console.log("[CPW] Run complete | policies_processed_count:", run_result.policies_processed_count, "| success:", run_result.success);
 
         console.log("[CPW] Entire batch run details:", JSON.stringify(run_result, null, 2));
@@ -274,15 +289,10 @@ export const cpw_controller = async (agency_id, carrier_ids, dealboard_id, rpa_c
         return run_result;
 
 
-        /**
-         * 1. update rpa function
-         * 2. review the payloads and responses
-         * 3. save the results into db
-         * 4. send out emails
-         */
 
     } catch (error) {
         add_error("run", "Internal server error", error?.message ?? String(error));
+        run_result.run_ended_at = new Date().toISOString();
         console.error("[CPW] cpw_controller error:", error);
         return run_result;
     }
