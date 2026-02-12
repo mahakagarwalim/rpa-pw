@@ -20,6 +20,7 @@ import {
     total_batches,
     get_rpa_creds_for_carrier,
     get_dealboard_id_for_cpw,
+    get_category_ids_for_agency,
     normalize_dealboard_ids,
     create_cpw_run_log,
     ObjectId
@@ -30,7 +31,7 @@ import { startCitizensSession, closeCitizensSession, processCitizensPolicyBatch 
 export const cpw_api_controller = async (req, res) => {
     try {
 
-        const { agency_id, carrier_name, dealboard_id: dealboard_id_from_body } = req.body ?? {};
+        const { agency_id, carrier_name, dealboard_id: dealboard_id_from_body, categories } = req.body ?? {};
 
         if (!agency_id || !carrier_name) {
             return res.status(400).json({ success: false, message: "agency_id and carrier_name are required" });
@@ -108,12 +109,17 @@ export const cpw_api_controller = async (req, res) => {
             }
         }
 
+        const category_ids_normalized = categories
+            ? await get_category_ids_for_agency(agency_ids_for_carriers, categories)
+            : [];
+
         const run_result = await cpw_controller(
             agency_id,
             carrier_ids_normalized,
             dealboard_ids,
             { username: rpa_creds.username, password: rpa_creds.password },
-            carrier_name
+            carrier_name,
+            category_ids_normalized
         );
 
         if (run_result.session_id && run_result.agency_id) {
@@ -133,7 +139,7 @@ export const cpw_api_controller = async (req, res) => {
 };
 
 
-export const cpw_controller = async (agency_id, carrier_ids, dealboard_id, rpa_creds, carrier_name) => {
+export const cpw_controller = async (agency_id, carrier_ids, dealboard_id, rpa_creds, carrier_name, category_ids = []) => {
     const dealboard_ids = normalize_dealboard_ids(dealboard_id);
 
     const run_started_at = new Date().toISOString();
@@ -214,7 +220,7 @@ export const cpw_controller = async (agency_id, carrier_ids, dealboard_id, rpa_c
         let total_count;
 
         try {
-            total_count = await get_dealcards_count_for_carrier_payments(agency_id, carrier_ids, valid_dealboard_ids);
+            total_count = await get_dealcards_count_for_carrier_payments(agency_id, carrier_ids, valid_dealboard_ids, category_ids);
         } catch (e) {
             add_error("count", "Failed to get dealcards count", e?.message ?? String(e));
             console.error("[CPW] get_dealcards_count error:", e);
@@ -252,7 +258,7 @@ export const cpw_controller = async (agency_id, carrier_ids, dealboard_id, rpa_c
         for (let skip = 0; skip < total_count; skip += PROCESS_BATCH_SIZE) {
             const batch_num = batch_index + 1;
             try {
-                const batch = await get_dealcards_for_carrier_payments(agency_id, carrier_ids, skip, PROCESS_BATCH_SIZE, valid_dealboard_ids);
+                const batch = await get_dealcards_for_carrier_payments(agency_id, carrier_ids, skip, PROCESS_BATCH_SIZE, valid_dealboard_ids, category_ids);
                 all_dealcards.push(...batch);
                 const policy_details = build_policy_details_from_batch(batch);
                 const payload = build_batch_payload(agency_id, session_id, policy_details);
@@ -262,7 +268,7 @@ export const cpw_controller = async (agency_id, carrier_ids, dealboard_id, rpa_c
 
                 run_result.analysis[batch_index] = batch_result;
 
-                await update_dealcard_quotes_rpa_bulk(batch_result?.policies ?? batch_result ?? []);
+                await update_dealcard_quotes_rpa_bulk(batch_result?.policies ?? batch_result ?? [], agency_id);
             } catch (e) {
                 add_error("batch", `Error processing batch ${batch_index} (skip ${skip})`, e?.message ?? String(e));
                 console.error("[CPW] Batch error:", e);

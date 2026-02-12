@@ -9,10 +9,12 @@ import { RPA_RESULT_STATUS_SUCCESS, RPA_RESULT_STATUS_ERROR } from "./cpw.consta
 /** collection services */
 import { aggregate_dealboard_cards, update_one_dealboard_cards, bulk_write_dealboard_cards } from "../../Database/Services/PrimaryDB/DealboardCardsCollection.Services.js";
 import { find_many_agencies } from "../../Database/Services/PrimaryDB/agencies.services.js";
+import { distinct_category_ids } from "../../Database/Services/PrimaryDB/categories.services.js";
+import { find_many_labels } from "../../Database/Services/PrimaryDB/LabelsCollection.Services.js";
 import { create_one_cpw_run_log, find_many_cpw_run_logs } from "../../Database/Services/SecondaryDB/CPWRunLogCollection.Services.js";
 
 /** constants */
-import { PROCESS_BATCH_SIZE, CPW_CRON_CARRIERS } from "./cpw.constants.js";
+import { PROCESS_BATCH_SIZE, CPW_CRON_CARRIERS, RPA_LABEL_NAME_MAPPING, RPA_LABEL_AGENCY_IDS } from "./cpw.constants.js";
 
 export const ObjectId = mongoose.Types.ObjectId;
 
@@ -93,6 +95,29 @@ export const normalize_dealboard_ids = (dealboard_id) => {
     return [...ids];
 };
 
+/**
+ * Get category IDs by string search on category_name.
+ * Only runs when categories are provided in payload.
+ * @param {Array<ObjectId>} agency_ids - agency_ids for filter (single or $in)
+ * @param {string|string[]} categories - category name(s) for string search (case-insensitive)
+ * @returns {Promise<string[]>} - normalized category IDs
+ */
+export const get_category_ids_for_agency = async (agency_ids, categories) => {
+    if (!categories || (Array.isArray(categories) && categories.length === 0)) return [];
+    const terms = Array.isArray(categories) ? categories : [categories];
+    const escaped = terms
+        .filter(Boolean)
+        .map((t) => String(t).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    if (escaped.length === 0) return [];
+    const category_filter = {
+        agency_id: agency_ids.length === 1 ? agency_ids[0] : { $in: agency_ids },
+        archived: false,
+        $or: escaped.map((e) => ({ category_name: new RegExp(e, 'i') }))
+    };
+    const ids = await distinct_category_ids(category_filter);
+    return (ids ?? []).map((id) => (id?.toString ? id.toString() : id)).filter(Boolean);
+};
+
 /** Start of day UTC for a date */
 const start_of_day_utc = (d) => {
     const x = new Date(d);
@@ -149,13 +174,17 @@ const cpw_quotes_match = (carrier_ids) => {
  * @param {string|ObjectId} agency_id
  * @param {Array<string|ObjectId>} carrier_ids
  * @param {Array<string|ObjectId>} [dealboard_ids] - optional; filter by dealboard_info (board ids)
+ * @param {Array<string|ObjectId>} [category_ids] - optional; filter by category_id (when categories in payload)
  * @returns {Promise<number>}
  */
-export const get_dealcards_count_for_carrier_payments = async (agency_id, carrier_ids, dealboard_ids = []) => {
+export const get_dealcards_count_for_carrier_payments = async (agency_id, carrier_ids, dealboard_ids = [], category_ids = []) => {
     try {
         const match = { agency_id: new ObjectId(agency_id), archived: false, createdFor: "renewal_automation" };
         if (Array.isArray(dealboard_ids) && dealboard_ids.length > 0) {
             match.dealboard_info = { $in: db_match_any_id(dealboard_ids) };
+        }
+        if (Array.isArray(category_ids) && category_ids.length > 0) {
+            match.category_id = { $in: db_match_any_id(category_ids) };
         }
         const pipeline = [
             { $match: match },
@@ -178,13 +207,17 @@ export const get_dealcards_count_for_carrier_payments = async (agency_id, carrie
  * @param {number} skip
  * @param {number} limit
  * @param {Array<string|ObjectId>} [dealboard_ids] - optional; filter by dealboard_info (board ids)
+ * @param {Array<string|ObjectId>} [category_ids] - optional; filter by category_id (when categories in payload)
  * @returns {Promise<Array>}
  */
-export const get_dealcards_for_carrier_payments = async (agency_id, carrier_ids, skip = 0, limit = PROCESS_BATCH_SIZE, dealboard_ids = []) => {
+export const get_dealcards_for_carrier_payments = async (agency_id, carrier_ids, skip = 0, limit = PROCESS_BATCH_SIZE, dealboard_ids = [], category_ids = []) => {
     try {
         const match = { agency_id: new ObjectId(agency_id), archived: false, createdFor: "renewal_automation" };
         if (Array.isArray(dealboard_ids) && dealboard_ids.length > 0) {
             match.dealboard_info = { $in: db_match_any_id(dealboard_ids) };
+        }
+        if (Array.isArray(category_ids) && category_ids.length > 0) {
+            match.category_id = { $in: db_match_any_id(category_ids) };
         }
         const pipeline = [
             { $match: match },
@@ -224,21 +257,60 @@ export const update_dealcard_quote_rpa = async (dealcard_id, insurance_id, rpa_r
 };
 
 /**
- * Bulk update: set rpa_result and carrier_payment_rpa_status for many policies in one DB round trip.
- * @param {Array<{ dealcard_id: string, insurance_id: string, rpa_result: object }>} policies
+ * Get enum -> label_id mapping for RPA labels (agency_id must be in RPA_LABEL_AGENCY_IDS).
+ * Fetches labels with agency_id, archived: false, rpa_label: true.
+ * @param {string|ObjectId} agency_id
+ * @returns {Promise<Record<string, ObjectId>>} { paid: ObjectId, assumed: ObjectId, ... }
  */
-export const update_dealcard_quotes_rpa_bulk = async (policies) => {
+export const get_rpa_label_id_mapping = async (agency_id) => {
+    const agency_str = (agency_id?.toString?.() ?? agency_id ?? '').toString();
+    if (!RPA_LABEL_AGENCY_IDS.includes(agency_str)) return {};
+    const labels = await find_many_labels(
+        { agency_id: new ObjectId(agency_id), archived: false, rpa_label: true },
+        { _id: 1, label_name: 1 }
+    );
+    const mapping = {};
+    const name_to_enum = Object.fromEntries(Object.entries(RPA_LABEL_NAME_MAPPING).map(([k, v]) => [v, k]));
+    for (const label of labels || []) {
+        const name = label?.label_name?.trim?.() ?? label?.label_name ?? '';
+        const enumKey = name_to_enum[name];
+        if (enumKey && label?._id) {
+            mapping[enumKey] = label._id;
+        }
+    }
+    return mapping;
+};
+
+/**
+ * Bulk update: set rpa_result and carrier_payment_rpa_status for many policies in one DB round trip.
+ * When agency_id is in RPA_LABEL_AGENCY_IDS, also adds corresponding label_id to dealcard.
+ * @param {Array<{ dealcard_id: string, insurance_id: string, rpa_result: object }>} policies
+ * @param {string|ObjectId} [agency_id] - required for label assignment
+ */
+export const update_dealcard_quotes_rpa_bulk = async (policies, agency_id) => {
     if (!Array.isArray(policies) || policies.length === 0) return;
+    const label_mapping = agency_id ? await get_rpa_label_id_mapping(agency_id) : {};
     const ops = [];
     for (const p of policies) {
         if (!p.dealcard_id || (p.insurance_id !== 0 && !p.insurance_id)) continue;
         const oid = (() => { try { return new ObjectId(p.insurance_id); } catch (_) { return null; } })();
         const str = db_value_to_string(p.insurance_id);
         const array_filter = oid != null ? { $or: [ { "q.insurance._id": oid }, { "q.insurance._id": str } ] } : { "q.insurance._id": str };
+        const update = {
+            $set: {
+                "quotes.$[q].insurance.rpa_result": p.rpa_result,
+                "quotes.$[q].insurance.carrier_payment_rpa_status": true
+            }
+        };
+        const enum_val = (p.rpa_result?.enum ?? p.rpa_result?.result ?? '').toLowerCase?.() ?? '';
+        const label_id = label_mapping[enum_val];
+        if (label_id) {
+            update.$addToSet = { label_id };
+        }
         ops.push({
             updateOne: {
                 filter: { _id: new ObjectId(p.dealcard_id) },
-                update: { $set: { "quotes.$[q].insurance.rpa_result": p.rpa_result, "quotes.$[q].insurance.carrier_payment_rpa_status": true } },
+                update,
                 arrayFilters: [ array_filter ]
             }
         });

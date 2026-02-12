@@ -68,7 +68,8 @@ export const generate_cpw_daily_report_html = (logs) => {
                     <td class="mono">${escapeHtml(p.dealcard_id || '–')}</td>
                     <td class="mono">${escapeHtml(p.insurance_id || '–')}</td>
                     <td class="mono">${escapeHtml(p.policy_number || '–')}</td>
-                    <td class="${statusClass}">${escapeHtml(p.status || p.enum || '–')}</td>
+                    <td class="${statusClass}">${escapeHtml(p.enum || '–')}</td>
+                    <td>${escapeHtml(p.balance || '–')}</td>
                     <td>${escapeHtml(p.notes || '–')}</td>
                 </tr>
             `;
@@ -88,11 +89,12 @@ export const generate_cpw_daily_report_html = (logs) => {
                             <th>Policy ID</th>
                             <th>Policy Number</th>
                             <th>Status</th>
+                            <th>Balance</th>
                             <th>Message</th>
                         </tr>
                     </thead>
                     <tbody>
-                        ${policyRows || '<tr><td colspan="5">No policy details</td></tr>'}
+                        ${policyRows || '<tr><td colspan="6">No policy details</td></tr>'}
                     </tbody>
                 </table>
             </div>
@@ -107,100 +109,109 @@ export const generate_cpw_daily_report_html = (logs) => {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>RPA Carrier Payments Report</title>
     <style>
-        :root {
-            --bg: #0f172a;
-            --surface: #1e293b;
-            --accent: #3b82f6;
-            --accent-dim: #60a5fa;
-            --text: #f1f5f9;
-            --text-muted: #94a3b8;
-            --success: #22c55e;
-            --error: #ef4444;
-        }
         * { box-sizing: border-box; }
         body {
-            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             margin: 0;
-            padding: 24px;
-            background: var(--bg);
-            color: var(--text);
-            line-height: 1.5;
+            padding: 0;
+            background: #f8fafc;
+            color: #334155;
+            line-height: 1.6;
         }
         .container {
-            max-width: 1200px;
+            max-width: 1100px;
             margin: 0 auto;
+            padding: 32px 24px;
         }
         .header {
             margin-bottom: 32px;
-            padding-bottom: 24px;
-            border-bottom: 1px solid rgba(255,255,255,0.1);
+            padding: 20px 0;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        .header-badge {
+            display: inline-block;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: #0ea5e9;
+            margin-bottom: 8px;
         }
         h1 {
-            font-size: 28px;
+            font-size: 24px;
             font-weight: 700;
-            margin: 0 0 8px 0;
-            background: linear-gradient(135deg, var(--accent-dim), var(--accent));
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
+            margin: 0 0 6px 0;
+            color: #0f172a;
         }
         .subtitle {
-            color: var(--text-muted);
+            color: #64748b;
             font-size: 14px;
         }
         .summary-cards {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            grid-template-columns: repeat(3, 1fr);
             gap: 16px;
             margin-bottom: 32px;
         }
         .card {
-            background: var(--surface);
+            background: #fff;
             border-radius: 12px;
             padding: 20px;
-            border: 1px solid rgba(255,255,255,0.06);
+            border: 1px solid #e2e8f0;
         }
         .card .label {
             font-size: 12px;
-            color: var(--text-muted);
+            color: #64748b;
             text-transform: uppercase;
-            letter-spacing: 0.5px;
-            margin-bottom: 8px;
+            letter-spacing: 0.05em;
+            margin-bottom: 6px;
+            font-weight: 500;
         }
         .card .value {
             font-size: 24px;
             font-weight: 700;
-            color: var(--accent-dim);
+            color: #0f172a;
+        }
+        .section-title {
+            font-size: 16px;
+            font-weight: 600;
+            margin: 32px 0 16px 0;
+            color: #0f172a;
+            padding-left: 12px;
+            border-left: 4px solid #0ea5e9;
         }
         table {
             width: 100%;
             border-collapse: collapse;
             font-size: 13px;
-            background: var(--surface);
+            background: #fff;
             border-radius: 12px;
             overflow: hidden;
-            border: 1px solid rgba(255,255,255,0.06);
+            border: 1px solid #e2e8f0;
         }
         th {
-            background: rgba(59, 130, 246, 0.15);
-            color: var(--accent-dim);
-            padding: 14px 16px;
+            background: #f1f5f9;
+            color: #475569;
+            padding: 12px 16px;
             text-align: left;
             font-weight: 600;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
         }
         td {
             padding: 12px 16px;
-            border-radius: 0;
+            border-bottom: 1px solid #f1f5f9;
         }
-        tr:not(:last-child) td {
-            border-bottom: 1px solid rgba(255,255,255,0.05);
+        tbody tr:last-child td {
+            border-bottom: none;
         }
-        tr:hover td {
-            background: rgba(255,255,255,0.02);
+        tbody tr:hover td {
+            background: #f8fafc;
         }
         .num { text-align: right; font-variant-numeric: tabular-nums; }
-        .mono { font-family: 'SF Mono', Monaco, monospace; font-size: 12px; }
-        .error-cell { color: var(--error); }
+        .mono { font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: 11px; color: #64748b; }
+        .error-cell { color: #dc2626; font-weight: 500; }
         .badge {
             display: inline-block;
             padding: 4px 10px;
@@ -208,45 +219,46 @@ export const generate_cpw_daily_report_html = (logs) => {
             font-size: 11px;
             font-weight: 600;
         }
-        .badge-success { background: rgba(34, 197, 94, 0.2); color: var(--success); }
-        .badge-error { background: rgba(239, 68, 68, 0.2); color: var(--error); }
-        .section-title {
-            font-size: 18px;
-            font-weight: 600;
-            margin: 32px 0 16px 0;
-            color: var(--text);
-        }
+        .badge-success { background: #dcfce7; color: #16a34a; }
+        .badge-error { background: #fee2e2; color: #dc2626; }
         .agency-section {
-            margin-bottom: 32px;
-            background: var(--surface);
+            margin-bottom: 24px;
+            background: #fff;
             border-radius: 12px;
             overflow: hidden;
-            border: 1px solid rgba(255,255,255,0.06);
+            border: 1px solid #e2e8f0;
         }
         .agency-heading {
             font-size: 14px;
             font-weight: 600;
             padding: 16px 20px;
             margin: 0;
-            background: rgba(59, 130, 246, 0.1);
-            color: var(--accent-dim);
+            background: #f8fafc;
+            color: #334155;
+            border-left: 4px solid #0ea5e9;
         }
         .policy-table { margin: 0; border-radius: 0; }
-        .policy-table th { font-size: 12px; }
+        .policy-table th { font-size: 11px; color: #64748b; }
+        .policy-table td { padding: 10px 20px; }
         .footer {
             margin-top: 40px;
-            padding-top: 24px;
-            border-top: 1px solid rgba(255,255,255,0.1);
+            padding: 20px 0;
+            border-top: 1px solid #e2e8f0;
             font-size: 12px;
-            color: var(--text-muted);
+            color: #94a3b8;
+            text-align: center;
+        }
+        @media (max-width: 640px) {
+            .summary-cards { grid-template-columns: 1fr; }
         }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
+            <span class="header-badge">Daily Report</span>
             <h1>RPA Carrier Payments Report</h1>
-            <p class="subtitle">Generated on ${formatDate(new Date())} • Report date: ${reportDate}</p>
+            <p class="subtitle">Generated on ${formatDate(new Date())} · Report date: ${reportDate}</p>
         </div>
 
         <div class="summary-cards">
@@ -272,8 +284,8 @@ export const generate_cpw_daily_report_html = (logs) => {
                     <th>Agency Name</th>
                     <th>Date Report Ran</th>
                     <th>Carrier</th>
-                    <th class="num">Total Dealcards</th>
-                    <th class="num">Total Policies</th>
+                    <th class="num">Dealcards</th>
+                    <th class="num">Policies</th>
                     <th>Session ID</th>
                     <th>Duration</th>
                     <th>Status</th>
