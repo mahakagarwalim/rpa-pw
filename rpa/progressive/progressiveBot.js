@@ -126,15 +126,15 @@ export async function runProgressiveAudit(policiesToAudit) {
                     await page.getByRole('textbox', { name: 'Policy Number' }).click();
                     await page.getByRole('textbox', { name: 'Policy Number' }).fill(policyNum);
                     await page.getByRole('button', { name: 'Search' }).click();
+                    await page.waitForTimeout(3000); // cooldown for page to load after Search
                 } else {
                     // Later policies: Find policy textbox + Find Policy button
                     console.log("   - Using Find policy...");
                     await page.getByRole('textbox', { name: 'Find policy' }).click();
                     await page.getByRole('textbox', { name: 'Find policy' }).fill(policyNum);
                     await page.getByRole('button', { name: 'Find Policy' }).click();
+                    await page.waitForTimeout(3000); // cooldown for page to load after Find Policy
                 }
-
-                await page.waitForTimeout(2000);
 
                 // Check for Non-Renewal
                 const nonRenewText = await page.getByText(/policy is being non-renewed/i).isVisible().catch(() => false);
