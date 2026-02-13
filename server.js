@@ -13,8 +13,6 @@ import {
     SERVER_ENV,
     LOCAL,
     ENABLE_CRONS,
-    SQS_PRODUCER,
-    SQS_CONSUMER
 } from "./Constants.js";
 
 /** routes */
