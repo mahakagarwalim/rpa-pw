@@ -1,5 +1,4 @@
-export default {
-    apps: [
+export const apps = [
         {
             name: "im-rpa",
             cwd: "/home/ubuntu/im-rpa",
@@ -18,5 +17,4 @@ export default {
             listen_timeout: 3000,
             kill_timeout: 3000
         }
-    ]
-};
+]
