@@ -17,3 +17,4 @@ export const RPA_LABEL_NAME_MAPPING = {
 
 /** Agency IDs that have RPA labels enabled (only add labels for these) */
 export const RPA_LABEL_AGENCY_IDS = ["665f24cd0588157c9f9cd663"];
+export const CPW_REPORT_RECIPIENTS = ['dinesh@insuredmine.com', 'satyam@insuredmine.com'];

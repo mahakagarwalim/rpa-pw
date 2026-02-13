@@ -38,7 +38,6 @@ app.use(morgan("tiny"));
 /** database */
 import "./Database/Config.js";
 
-
 /** server */
 app.listen(PORT, () => {
     console.info(`\nApplication started in ENV : [ ${ENV} | ${LOCAL && "LOCAL" || "SERVER"} ]`);

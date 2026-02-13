@@ -19,17 +19,14 @@ const {
     AWS_REGION,
     EPIC_IM_QUEUE_DEV,
     EPIC_IM_QUEUE_REGION
-
 } = process.env;
 
 /** SETUP */
 export const PORT = process.env.PORT || 5000;
 export const ENV = process.env.ENV || "DEVELOPMENT";
 export const SERVER_ENV = process.env.SERVER_ENV || "DEVELOPMENT";
-export const LOCAL = process.env.LOCAL && process.env.LOCAL === "TRUE" && true || false;
-export const ENABLE_CRONS = process.env.ENABLE_CRONS && process.env.ENABLE_CRONS === "TRUE" && true || false;
-export const SQS_PRODUCER = process.env.SQS_PRODUCER && process.env.SQS_PRODUCER === "TRUE" && true || false;
-export const SQS_CONSUMER = process.env.SQS_CONSUMER && process.env.SQS_CONSUMER === "TRUE" && true || false;
+export const LOCAL = process.env.LOCAL || false;
+export const ENABLE_CRONS = process.env.ENABLE_CRONS || false;
 
 /** DB URI */
 export const PRIMARY_DB_URI = PROD_PRIMARY_DB_URI || TEST_PRIMARY_DB_URI;

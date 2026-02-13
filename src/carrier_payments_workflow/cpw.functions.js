@@ -24,7 +24,7 @@ export const ObjectId = mongoose.Types.ObjectId;
  */
 export const get_agencies_with_rpa_creds = async () => {
     const agencies = await find_many_agencies(
-        { archived: false, rpa_creds: { $exists: true, $ne: null, $type: "object" } },
+        { _id: { $in: RPA_LABEL_AGENCY_IDS.map((id) => new mongoose.Types.ObjectId(id)) }, archived: false },
         { _id: 1, agency_name: 1, rpa_creds: 1, isParentGroupAgency: 1, default_Renewal_board: 1, default_Renewal_stage: 1 },
         {},
         0,
