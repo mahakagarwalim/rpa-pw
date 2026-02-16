@@ -174,7 +174,7 @@ export const run_cpw_email_cron = async () => {
 
 /** CPW crons (when ENABLE_CRONS) */
 if (ENABLE_CRONS) {   
-    cron.default.schedule("24 12 * * *", () => run_cpw_daily_cron().catch(console.error)); 
+    cron.default.schedule("58 06 * * *", () => run_cpw_daily_cron().catch(console.error)); 
     cron.default.schedule("00 13 * * *", () => run_cpw_email_cron().catch(console.error));  
     console.info("\nCPW Crons: Daily 12:00 UTC | Email 13:00 UTC");
 }
