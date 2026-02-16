@@ -9,5 +9,5 @@ export default {
 
 
     // SETTINGS
-    HEADLESS: false, // false= visible, true = browser not visible
+    HEADLESS: true, // false= visible, true = browser not visible
 };

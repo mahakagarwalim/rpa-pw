@@ -13,8 +13,6 @@ import {
     SERVER_ENV,
     LOCAL,
     ENABLE_CRONS,
-    SQS_PRODUCER,
-    SQS_CONSUMER
 } from "./Constants.js";
 
 /** routes */
@@ -38,11 +36,10 @@ app.use(morgan("tiny"));
 /** database */
 import "./Database/Config.js";
 
-
 /** server */
 app.listen(PORT, () => {
     console.info(`\nApplication started in ENV : [ ${ENV} | ${LOCAL && "LOCAL" || "SERVER"} ]`);
     console.info(`\nDatabase connection : [ ${SERVER_ENV} ]`);
-    console.info(`\nCrons Enabled : [ ${ENABLE_CRONS} ] | Producers Enabled : [ ${SQS_PRODUCER} ] |  Consumer Enabled : [ ${SQS_CONSUMER} ] `)
+    console.info(`\nCrons Enabled : [ ${ENABLE_CRONS} ] `)
     console.info(`\nRPA PROJECT : Running on port : [ ${PORT} ]`);
 })
